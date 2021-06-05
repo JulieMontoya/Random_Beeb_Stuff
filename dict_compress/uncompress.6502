@@ -1,0 +1,165 @@
+\  DICTIONARY-BASED TEXT UNCOMPRESSION ROUTINE
+
+\  VARIABLES
+
+text_ptr=&70    \  pointer to text to uncompress
+spc_hi=&A0      \  space, with high bit set
+CR=&D           \  carriage return
+osasci=&FFE3    \  OS routine to display character, adding LF with CR
+
+messages=&6000
+dictionary=&7000
+
+\  THE UNCOMPRESSION CODE
+
+ORG &7800
+
+._begin
+
+.select_msg
+    ASL A
+    TAX
+    CLC
+    LDA msg_table,X
+    ADC #messages MOD256
+    STA text_ptr
+    LDA msg_table+1,X
+    ADC #messages DIV256
+    STA text_ptr+1
+
+\  Print text starting at [text_ptr] until &00 is reached
+\  Values &80-&FF are expanded by replacing them with dictionary words
+
+.uncompress
+    LDY #0
+.uncomp_loop
+    LDA (text_ptr),Y
+    BEQ uncomp_done
+    BPL uncomp_not_token
+    JSR expand_token
+    TYA
+    LDY #0
+    SEC
+    ADC text_ptr
+    STA text_ptr
+    BCC uncomp_loop		\  check if or not we need to ...
+    INC text_ptr+1     \  ... increase the high byte
+    BCS uncomp_loop        \  (INC did not affect carry)
+.uncomp_not_token
+    JSR newwrch
+.uncomp_next
+    INY
+    BNE uncomp_loop
+    INC text_ptr+1
+    BNE uncomp_loop
+    \  NB; we are not expecting to fall through here
+    
+.uncomp_done
+    RTS
+
+\  Expand a token from the dictionary
+
+.expand_token
+    ASL A   \  now C=1
+    TAX    
+    \  Stash Y and the old pointer
+    TYA
+    PHA
+    LDA text_ptr+1
+    PHA
+    LDA text_ptr
+    PHA
+.get_word_base
+    CLC
+    LDA dictionary,X
+    ADC #dict_words MOD256
+    STA text_ptr
+    LDA dictionary+1,X
+    ADC #dict_words DIV256
+    STA text_ptr+1
+    LDY #0
+.display_word
+    LDA (text_ptr),Y
+    BMI expand_done
+._disp_word1                \  Not the last character
+    CMP #32
+    BCS disp_word2
+
+\  Codes &00-&1F in middle of a word are expanded as
+\  tokens &80-&9F.
+
+    JSR expand_token
+    JMP disp_word3
+
+.disp_word2
+    JSR newwrch
+.disp_word3
+	INY
+	BNE display_word
+    \  NB; we are not expecting to fall through here
+
+\  Display last character of word and return.
+
+.expand_done
+    AND #&7F                \  Clear high bit
+    CMP #32
+    BCS expand_done1
+    
+\  Codes &00-&1F at end of word are displayed as a lower
+\  case letter with a trailing space.
+    
+    ORA #&60
+    JSR newwrch1
+    JMP expand_done2
+      
+.expand_done1
+    JSR newwrch
+.expand_done2
+    \  Retrieve old pointer and Y
+    PLA
+    STA text_ptr
+    PLA
+    STA text_ptr+1
+    PLA
+    TAY
+._rts
+    RTS
+
+\  For an additional space saving, the characters { | } ~
+\  (which would ordinarily display as 1/4 || 3/4 ÷ in MODE 7)
+\  are mapped to display as , - . ? with a trailing space.
+
+.newwrch
+    CMP #64
+    BNE newwrch0
+    LDA #97
+    BNE newwrch1
+.newwrch0
+    CMP #&7B        \ opening posh bracket or 1/4
+    BCC newwrch2
+    SBC #79 \ we know C=1 because BCC didn't branch
+    CMP #47         \ ~ would ordinarily give /
+    BNE newwrch1
+    LDA #63         \ change to ?
+
+\  Display a character with a trailing space
+
+.newwrch1
+    JSR osasci
+    LDA #32
+.newwrch2
+    JMP osasci
+
+._code_end
+
+INCLUDE "dict_and_msgs.6502"
+
+._end
+
+SAVE "UNCMP1", _begin, _mtable_end, _rts	
+SAVE "DICT", dictionary, dict_end
+SAVE "MSGS", messages, msgs_end
+
+PRINT "Size of dictionary = ", ~dict_end-dictionary
+PRINT "Size of messages   = ", ~msgs_end-messages
+
