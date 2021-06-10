@@ -1,0 +1,336 @@
+#!/opt/local/bin/perl -w
+use strict;
+use constant { TRUE => 1, FALSE => "" };
+use Data::Dumper;
+use Getopt::Std;
+
+my %OPTIONS;
+getopts "Dd:f:m:o:s:tT:w", \%OPTIONS;
+
+my ($word, $word1, $freq, %freq, %word, @words, %dict, $saving, %saving, %special);
+
+my $filename = $OPTIONS{"f"};
+my $CHUNK_SIZE = 256;
+my $group_size = $OPTIONS{"s"} // 4;
+my $MIN_SAVING = $OPTIONS{"m"} // 0;
+my $TERSE = $OPTIONS{"t"};
+my $OUTPUT_FILE = $OPTIONS{"o"};
+my $DICT_FILE = $OPTIONS{"d"};
+my $WRITE_DICT = $OPTIONS{"w"};
+my $tok = $OPTIONS{"T"} // 160;
+my $DUMP = $OPTIONS{"D"}; 
+my $data = "";
+my $need_label = FALSE;
+
+my (@free_slots, $sp_tok, @move);
+
+my (@dict_table, @msg_table, @dict_source, @msg_source);
+my $message = 0;
+
+#########################  BEGIN FUNCTION DEFINITIONS  #########################
+
+sub times_seen {
+    my $haystack = shift;
+    my $needle = shift;
+    my $times_seen = 0;
+    ++$times_seen  while $haystack =~ /$needle/g;
+    $times_seen;
+};
+
+sub make_equs {
+    my $data = shift;
+    my $output = "";
+    my $max_width = shift || 80;
+    my $indent = shift // 4;
+    my $sep = "";
+    my $output = "";
+    my $line_so_far = " " x $indent;    
+    my ($head, $equ);
+    
+    while ($data) {
+        if ($data =~ /^([ -!#-~]+)(.*)$/) {
+            $head = $1;
+            $data = $2;
+            #printf "Data begins with \"%s\"\n", $head;
+            #$output .= $sep . sprintf "EQUS \"%s\"", $head;
+            #$sep = ":";
+            $equ = sprintf "EQUS \"%s\"", $head;
+        }
+        else {
+            $head = unpack "C", substr $data, 0, 1;
+            $data = substr $data, 1;
+            #printf "Data begins with %d = &%02X\n", $head, $head;
+            #$output .= $sep . sprintf "EQUB &%02X", $head;
+            #$sep = ":";
+            $equ = sprintf "EQUB &%02X", $head;
+        };
+        if (length "$line_so_far$sep$equ" > $max_width) {
+            $output .= "$line_so_far\n";
+            $line_so_far = " " x $indent . $equ;
+        }
+        else {
+            $line_so_far .= "$sep$equ";
+        };
+        $sep = ":";
+    };
+    $output .= "$line_so_far\n";
+};
+
+sub dict_entry {
+    my $data = shift;
+    my $output = "";
+    my $sep = "    ";
+    my ($head, $tail);
+
+    # Lower case letter with trailing space => &00-&1F 
+    $data =~ s/([a-z]) $/pack "C", (unpack "C", $1) & 0x1f/e;
+    # Set high bit of last character    
+    $data =~ s/(.)$/pack "C", (unpack "C", $1) | 0x80/e;
+    
+    while ($data) {
+        if ($data =~ /^([ -!#-~]+)(.*)$/) {
+            $head = $1;
+            $data = $2;
+            #printf "Data begins with \"%s\"\n", $head;
+            $output .= $sep . sprintf "EQUS \"%s\"", $head;
+            $sep = ":";
+        }
+        else {
+            $head = unpack "C", substr $data, 0, 1;
+            $data = substr $data, 1;
+            #printf "Data begins with %d = &%02X\n", $head, $head;
+            $output .= $sep . sprintf "EQUB &%02X", $head;
+            $sep = ":";
+        };
+    };
+    $output .= "\n";
+};
+
+sub debug_dump_dict {
+    my $sort = shift;
+    my @tokens = keys %dict;
+    if ($sort) {
+        @tokens = sort @tokens;
+    }
+    my ($tok, $word, $freq, $saving);
+	foreach $tok (@tokens) {
+		$word = $dict{$tok};
+		$freq = $freq{$word};
+		$saving = $saving{$word};
+		printf "%02X %-16s ", $tok, $word;
+		if (defined $freq) {
+			printf "%6d", $freq;
+		}
+		else {
+			print "   ---";
+		};
+		if (defined $saving) {
+			printf "%6d", $saving;
+		}
+		else {
+			print "   ---";
+		};
+		print "\n";
+	};
+};
+
+##########################  END FUNCTION DEFINITIONS  ##########################
+
+#############################  READ THE DATA FILE  #############################
+
+if ($filename) {
+    my $chunk;
+    open DATA,"<", $filename or die "Could not open $filename: $!";
+    while (!eof DATA) {
+        read DATA, $chunk, $CHUNK_SIZE;
+        $data .= $chunk;
+    };
+    close DATA;
+};
+
+##########################  READ THE DICTIONARY FILE  ##########################
+
+if ($DICT_FILE && -e $DICT_FILE) {
+    open DICT, "<", $DICT_FILE or die "Could not open $DICT_FILE: $!";
+    while ($_ = <DICT>) {
+        if (/([0-9A-Fa-f]+)\s+(\S+)/) {
+            $tok = hex $1;
+            $word = $2;
+            $word1 = $word;
+            
+            printf "%02x => '%s'\n", $tok, $word;
+            $word =~ s/`/ /g;
+            $dict{$tok} = $word;
+            #$saving{$dict{$tok}} = 0;
+            # Calculate the saving
+            $freq = times_seen $data, $word;
+            $freq{$word1} = $freq;
+            $freq{$word} = $freq;
+            $saving = ($freq * length $word) - (2 + $freq + length $word);
+            $saving{$word1} = $saving;
+            $saving{$word} = $saving;
+            printf "'%s' appears %d times saving %d\n", $word, $freq, $saving;
+        };
+    };
+    close DICT;
+    
+    #debug_dump_dict;
+    
+    for ($sp_tok = 128; $sp_tok < 160; ++$sp_tok) {
+        if (!defined $dict{$sp_tok}) {
+            push @free_slots, $sp_tok;
+        };
+    };
+    
+    @move = sort {$b <=> $a} keys %dict;
+    
+    if (@free_slots) {
+        print "The following low token slots are free:\n";
+        foreach $sp_tok (@free_slots) {
+            printf " &%02X", $sp_tok;
+        };
+        print "\n";
+    };
+    
+    print "Tokens we can move:\n";
+    foreach (@move) {
+        last if $_ < 160 || !@free_slots;
+        #printf "&%02X  '%s'\n", $_, $dict{$_};
+        $sp_tok = shift @free_slots;
+        printf "&%02X '%s' -> &%02X\n", $_, $dict{$_}, $sp_tok;
+        $dict{$sp_tok} = delete $dict{$_};
+    };
+    
+    #debug_dump_dict 1;
+    
+    #exit;
+    
+    #  Make substitutions in order, longest-first
+    #  First pass, avoid the reusable ones
+    foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+        $word = $dict{$tok};
+		printf "Substituting '%s' with &%02X\n", $word, $tok;
+        if ($tok >= 160) {
+            $data =~ s/$word/pack "C", $tok/eg;
+            #printf "%02X '%s'\n", $tok, $dict{$tok};
+        };
+    };
+
+    #  Second pass, just the reusable ones
+    foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+        $word = $dict{$tok};
+		printf "Substituting '%s' with &%02X\n", $word, $tok;
+        if ($tok < 160) {
+            $data =~ s/$word/pack "C", $tok/eg;
+            #printf "%02X '%s'\n", $tok, $dict{$tok};
+        };
+    };
+
+    ##  Make substitutions in order, best saving-worst saving
+    ##  First pass, avoid the reusable ones
+    #foreach $tok (sort {$saving{$b} <=> $saving{$a}} keys %dict) {
+    #    $word = $dict{$tok};
+    #    if ($tok >= 160) {
+    #        $data =~ s/$word/pack "C", $tok/eg;
+    #        #printf "%02X '%s'\n", $tok, $dict{$tok};
+    #    };
+    #};
+
+    $data =~ s/, /{/g;
+    $data =~ s/- /|/g;
+    $data =~ s/\. /}/g;
+    $data =~ s/\? /~/g;
+    $data =~ s/a /\@/g;
+};
+
+##########################  SPLIT THE MESSAGES APART  ##########################
+
+foreach (split /\n/, $data) {
+    push @msg_source, make_equs $_;
+};
+
+########################  WRITE OUT THE  MESSAGE TABLE  ########################
+# (this goes first because it's almost part of the uncompress code)
+
+print ".msg_table\n";
+push @msg_table, ".msg_table\n";
+for ($message = 0; $message < @msg_source; ++$message) {
+    print "    EQUW msg$message-msg0\n";
+    push @msg_table, "    EQUW msg$message-msg0\n";
+};
+print "._mtable_end\n";
+push @msg_table, "._mtable_end\n";
+print "\n";
+
+#######################  WRITE OUT THE DICTIONARY TABLE  #######################
+
+print "ORG dictionary\n";
+push @dict_table,  "ORG dictionary\n";
+for ($tok = 128; $tok < 256; ++$tok) {
+    if (defined $dict{$tok}) {
+	    push @dict_table, sprintf "    EQUW word%d-dict_words\n", $tok;
+        printf "    EQUW word%d-dict_words\n", $tok;
+	}
+	else {
+	    push @dict_table, "    EQUW 0\n";
+	    print "    EQUW 0\n";
+    };
+};
+print "\n";
+
+#######################  WRITE OUT THE  DICTIONARY DATA  #######################
+
+print "ALIGN &100\n\n";
+push @dict_source, "ALIGN &100\n\n";
+print ".dict_words\n";
+push @dict_source, ".dict_words\n";
+$need_label = TRUE;     #  we always want the first one
+for ($tok = 128; $tok < 256; ++$tok) {
+    if ($need_label || defined $dict{$tok}) {
+        push @dict_source, sprintf ".word%d\n", $tok;
+        printf ".word%d\n", $tok;
+        $need_label = FALSE;
+    };
+    if (defined $dict{$tok}) {
+        push @dict_source, $_ = dict_entry $dict{$tok};
+        print;
+        $need_label = TRUE;
+    };
+};
+print ".dict_end\n";
+push @dict_source, ".dict_end\n";
+
+###########################  WRITE OUT THE MESSAGES  ###########################
+
+$message = 0;
+print "ORG messages\n\n";
+foreach (@msg_source) {
+    printf ".msg%d\n", $message++;
+    print;
+    print "    EQUB CR\n    BRK\n";
+};
+print ".msgs_end\n";
+
+#########################  WRITE OUT THE  OUTPUT FILE  #########################
+
+if ($OUTPUT_FILE) {
+    #print "Writing output file $OUTPUT_FILE\n";
+    open FH, ">", $OUTPUT_FILE or die "Could not open $OUTPUT_FILE: $!";
+    print FH @msg_table;
+    print FH "\n";
+    print FH @dict_table;
+    print FH "\n";
+    print FH @dict_source;
+    print FH "\n";
+    $message = 0;
+    print FH "ORG messages\n\n";
+    foreach (@msg_source) {
+        printf FH ".msg%d\n", $message++;
+        print FH;
+        print FH "    EQUB CR\n    BRK\n";
+    };
+    print FH ".msgs_end\n";
+    close FH;
+};
+
+exit;

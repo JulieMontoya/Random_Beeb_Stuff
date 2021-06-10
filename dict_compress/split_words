@@ -1,0 +1,278 @@
+#!/opt/local/bin/perl -w
+use strict;
+use constant { TRUE => 1, FALSE => "" };
+use Data::Dumper;
+use Getopt::Std;
+
+my %OPTIONS;
+getopts "Dd:f:m:Nno:Ss:tT:vW:w", \%OPTIONS;
+
+my ($word, %word, @words, $words, %dict, %freq, $saving, %saving);
+
+my ($i, $j, $word1, $word2, $freq1, $freq2, $prefix, $suffix, $affix, %affix,
+    @affix, %used_whole, $sh_chars, $freq, %special, %shortenable);
+
+my $filename = $OPTIONS{"f"};
+my $CHUNK_SIZE = 256;
+my $group_size = $OPTIONS{"s"} // 4;
+my $MIN_SAVING = $OPTIONS{"m"} // 0;
+my $TERSE = $OPTIONS{"t"};
+my $VERBOSE = $OPTIONS{"v"};
+my $OUTPUT_FILE = $OPTIONS{"o"};
+my $NO_SAVINGS  = $OPTIONS{"n"};
+my $DICT_FILE   = $OPTIONS{"d"};
+my $WRITE_DICT  = $OPTIONS{"w"};
+my $NEW_DICT    = $OPTIONS{"W"};
+my $SHOW_MSGS   = $OPTIONS{"S"};
+my $tok = $OPTIONS{"T"} // 160;
+my $sp_tok = 128;
+my $DUMP = $OPTIONS{"D"} // ""; 
+my $data = "";
+
+if ($NEW_DICT) {
+	$WRITE_DICT = TRUE;
+}
+else {
+	$NEW_DICT = $DICT_FILE;
+};
+
+#########################  BEGIN FUNCTION DEFINITIONS  #########################
+
+sub times_seen {
+    my $haystack = shift;
+    my $needle = shift;
+    my $times_seen = 0;
+    ++$times_seen  while $haystack =~ /$needle/g;
+    $times_seen;
+}
+
+sub show_msg {
+    my $msg = shift;
+    my ($char);
+    my $output = "";
+    
+    foreach (split //, $msg) {
+        $char = unpack "C", $_;
+        if ($char >= 32 && $char <= 126) {
+            $output .= $_;
+        }
+        else {
+            $output .= sprintf "\e[4m%02X\e[m", $char;
+        };
+    };
+    $output;
+};
+
+##########################  END FUNCTION DEFINITIONS  ##########################
+
+#############################  READ THE DATA FILE  #############################
+
+if ($filename) {
+    my $chunk;
+    open DATA,"<", $filename or die "Could not open $filename: $!";
+    while (!eof DATA) {
+        read DATA, $chunk, $CHUNK_SIZE;
+        $data .= $chunk;
+    };
+    close DATA;
+};
+
+##########################  READ THE DICTIONARY FILE  ##########################
+
+if ($DICT_FILE && -e $DICT_FILE) {
+    print "Reading dictionary '$DICT_FILE' .....\n";
+    open DICT, "<", $DICT_FILE or die "Could not open $DICT_FILE: $!";
+    while ($_ = <DICT>) {
+        #if (/([0-9A-Fa-f]+)\s+(\S.*)$/)
+        if (/([0-9A-Fa-f]+)\s+(\S+)/) {
+            $tok = hex $1;
+            $word = $2;
+            $word1 = $word;
+            
+            printf "%02x => '%s'\n", $tok, $word;
+            $word =~ s/`/ /g;
+            $dict{$tok} = $word;
+            #$saving{$dict{$tok}} = 0;
+            # Calculate the saving
+            $freq = times_seen $data, $word;
+            $freq{$word1} = $freq;
+            $freq{$word} = $freq;
+            $saving = ($freq * length $word) - (2 + $freq + length $word);
+            $saving{$word1} = $saving;
+            $saving{$word} = $saving;
+            printf "'%s' appears %d times saving %d\n", $word, $freq, $saving;
+        };
+    };
+    close DICT;
+    
+    ##  Make substitutions in order, longest-first
+    #foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+    #    $word = $dict{$tok};
+    #    printf "Substituting '%s' with &%02X", $word, $tok;
+    #    $data =~ s/$word/pack "C", $tok/eg;
+    #    printf "%02X '%s'\n", $tok, $dict{$tok};
+    #};
+
+    #  Make substitutions in order, longest-first
+    #  First pass, avoid the reusable ones
+    foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+        $word = $dict{$tok};
+		printf "Substituting '%s' with &%02X\n", $word, $tok;
+        if ($tok >= 160) {
+            $data =~ s/$word/pack "C", $tok/eg;
+            #printf "%02X '%s'\n", $tok, $dict{$tok};
+        };
+    };
+
+};
+
+$tok = $OPTIONS{"T"} // 160;
+++$tok while exists $dict{$tok};
+die "Dictionary is full!" if $tok > 255;
+
+while ($data =~ /\W*(\w+)/g) {
+    $word = $1;
+    ++$word{$word};
+    #print "$word\n";
+};
+
+foreach $word (sort {length $b <=> length $a} keys %word) {
+    my $freq1 = times_seen $data, $word;
+    my $freq2 = times_seen $data, "$word ";
+    if ($freq2 == $freq1) {
+        $word .= "`";
+        $saving = ($freq1 * length $word) - (2 + $freq1 + length $word);
+    };
+    $freq{$word} = $freq1;
+    $saving = ($freq1 * length $word) - (2 + $freq1 + length $word);
+    $saving{$word} = $saving;
+    printf "%-16.16s %6d %6d %6d\n", $word, $freq1, $freq2, $saving;
+    
+    if ($freq1 > 1 && length $word > 1 && $saving > $MIN_SAVING) {
+        $dict{$tok} = $word;
+    };
+    ++$tok while exists $dict{$tok};
+    die "Dictionary is full!" if $tok > 255;
+};
+
+# print Dumper \%dict;
+
+#####################  WRITE OUT THE NEW  DICTIONARY FILE  #####################
+
+print "WRITE_DICT:'$WRITE_DICT' NEW_DICT:'$NEW_DICT' NO_SAVINGS '$NO_SAVINGS'\n";
+
+if ($WRITE_DICT) {
+    open DICT, ">", $NEW_DICT or die "Could not open $NEW_DICT: $!";
+    print "Writing dictionary file: $DICT_FILE\n";
+    for ($tok = 128; $tok < 256; ++$tok) {
+    #foreach $tok (sort {$saving{$dict{$b}} <=> $saving{$dict{$a}}} keys %dict)
+        #printf "%02X %s\n", $tok, $dict{$tok};
+        if (exists $dict{$tok}) {
+            $dict{$tok} =~ s/ /`/g;
+            $word = $dict{$tok};
+			if ($NO_SAVINGS) {
+				printf "%02X %-16s\n", $tok, $dict{$tok};
+				printf DICT "%02X %-16s\n", $tok, $dict{$tok};
+			}
+			else {
+				printf "%02X %-16s %6d\n", $tok, $dict{$tok}, $saving{$dict{$tok}};
+				#printf DICT "%02X %-16s %6d\n", $tok, $dict{$tok}, $saving{$dict{$tok}};
+				printf DICT "%02X %-16s\n", $tok, $dict{$tok};
+			};
+        };
+    };
+    close DICT;
+    $DUMP = TRUE;
+}
+else {
+    print "Not writing dictionary.\n";
+    #foreach $tok (sort {$saving{$dict{$b}} <=> $saving{$dict{$a}}} keys %dict) {
+    #    #printf "%02X %s\n", $tok, $dict{$tok};
+    #    printf "%02X %s  %6d\n", $tok, $dict{$tok}, $saving{$dict{$tok}} if exists $dict{$tok};
+    #};
+};
+
+print "Still here. ('$DUMP')\n";
+
+if ($DUMP) {
+    foreach $tok (sort {$saving{$dict{$b}} <=> $saving{$dict{$a}}} keys %dict) {
+        #printf "%02X %s\n", $tok, $dict{$tok};
+        #if (exists $dict{$tok}) {
+        #    printf "%02X %-16s %6d %2d\n", $tok, $dict{$tok}, $saving{$dict{$tok}} // 0,
+        #     $shortenable{$dict{$tok}} // 0;
+        #};
+        if ($NO_SAVINGS) {
+			if (exists $dict{$tok}) {
+			    printf "%02X %-16s\n", $tok, $dict{$tok};
+			}
+			else {
+			    printf "%02X %-16s %6d\n", $tok, $dict{$tok}, $saving{$dict{$tok}};
+			};
+        };
+    };
+};
+
+#################  MAKE SUBSTITUTIONS IN ORDER, LONGEST-FIRST  #################
+
+#  First pass, avoid the reusable ones
+foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+	$word = $dict{$tok};
+	$word =~ s/`/ /g;
+	if ($tok >= 160) {
+		printf "Substituting '%s' with &%02X\n", $word, $tok    if $VERBOSE;
+		$data =~ s/$word/pack "C", $tok/eg;
+		#printf "%02X '%s'\n", $tok, $dict{$tok};
+	};
+};
+
+#  Second pass, just the reusable ones
+foreach $tok (sort {length $dict{$b} <=> length $dict{$a}} keys %dict) {
+	$word = $dict{$tok};
+	$word =~ s/`/ /g;
+	if ($tok < 160) {
+		printf "Substituting '%s' with &%02X\n", $word, $tok    if $VERBOSE;
+		$data =~ s/$word/pack "C", $tok/eg;
+		#printf "%02X '%s'\n", $tok, $dict{$tok};
+	};
+};
+
+#  Lastly the hard-coded ones
+$data =~ s/, /{/g;
+$data =~ s/- /|/g;
+$data =~ s/\. /}/g;
+$data =~ s/\? /~/g;
+$data =~ s/a /\@/g;
+
+if ($SHOW_MSGS) {
+    foreach (split /\n/, $data) {
+        print "\n";
+        print show_msg $_;
+        print "\n";
+    }
+};
+
+exit;
+
+# Dump out the dictionary for debugging
+
+foreach $tok (keys %dict) {
+    $word = $dict{$tok};
+    $freq = $freq{$word};
+    $saving = $saving{$word};
+    printf "%02X %-16s ", $tok, $word;
+    if (defined $freq) {
+        printf "%6d", $freq;
+    }
+    else {
+        print "   ---";
+    };
+    if (defined $saving) {
+        printf "%6d", $saving;
+    }
+    else {
+        print "   ---";
+    };
+    print "\n";
+}
+
+exit;
