@@ -29,5 +29,33 @@ For example, a dictionary entry such as `&6C &00 &03 &87` would be interpreted a
 + &03 => token &83  (this points to `in`.)
 + &87 => last character &07 => lower case `g` with a trailing space.
 
-The full expansion would be `landing `  (including the trailing space).
+The full expansion would be `landing `  (including the trailing space), occupying just 4 bytes instead of 8.
+
+## dict2asm
+
+This Perl script reads a message file and a dictionary file, and produces BeebAsm source code which can be combined with the uncompression routine. 
+
+### Usage
+
+`dict2asm -f message_file -d dictionary_file -o output_file`
+
+### Message File
+
+The message file simply contains the individual messages to be compressed, separated by newline characters.  These will be translated automatically to CR, which is the Beeb's usual end-of-line character.
+
+### Dictionary File
+
+The dictionary file is a text file on which each line contains a two-digit hex number 80-FF, separated by whitespace from the "word" represented by the token. Any spaces that are part of the word must be replaced by backquotes.  Example:
+```
+A0 You`are`in`     
+A1 North           
+A2 South           
+A3 East            
+A4 West            
+A5 You`            
+A6 are`            
+A7 bed             
+A8 bath            
+A9 room            
+```
 
