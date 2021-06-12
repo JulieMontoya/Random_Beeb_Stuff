@@ -1,0 +1,667 @@
+#!/opt/local/bin/perl -w
+use strict;
+use constant { TRUE => 1, FALSE => "" };
+use Data::Dumper;
+use Getopt::Std;
+
+##########################  HUFFMAN TREE  NODE CLASS  ##########################
+
+package HuffmanTree::Node;
+use strict;
+require Exporter;
+
+use constant { TRUE => "1", FALSE => "" };
+
+our @ISA = qw/Exporter/;
+our @EXPORT_OK = qw/new/;
+
+my $_serial;
+
+sub new {
+    my $proto = shift;                  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    my $class = ref($proto) || $proto;  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+    my $freq = shift // 0;
+    my $payload = shift;
+
+    my $self = { "_serial"   => ++$_serial,
+                 "_parent"   => undef,
+                 "_child0"   => undef,
+                 "_child1"   => undef,
+                 "_tree"     => undef,
+                 "_tree_pos" => undef,
+                 "_freq"     => $freq,
+                 "_path_to"  => "",
+                 "_payload"  => $payload };
+
+    bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    return $self;
+};
+
+sub set_left_child {
+    my $self = shift;
+    return undef unless $self;
+
+    my $left_child = shift;
+    $self->{"_child0"} = $left_child;
+    # $self->{"_is_leaf"} = FALSE;
+    $left_child->{"_parent"} = $self;
+    $left_child->{"_path_to"} = $self->{"_path_to"} . "0";
+    $self->{"_freq"} += $left_child->{"_freq"};
+    $self;
+};
+
+sub set_right_child {
+    my $self = shift;
+    return undef unless $self;
+
+    my $right_child = shift;
+    $self->{"_child1"} = $right_child;
+    # $self->{"_is_leaf"} = FALSE;
+    $right_child->{"_parent"} = $self;
+    $right_child->{"_path_to"} = $self->{"_path_to"} . "1";
+	$self->{"_freq"} += $right_child->{"_freq"};
+    $self;
+};
+
+sub parent {
+    my $self = shift;
+    $self->{"_parent"};
+};
+
+sub left_child {
+    my $self = shift;
+    $self->{"_child0"};
+};
+
+sub right_child {
+    my $self = shift;
+    $self->{"_child1"};
+};
+
+sub serial {
+    my $self = shift;
+    $self->{"_serial"};
+};
+
+sub freq {
+    my $self = shift;
+    $self->{"_freq"};
+};
+
+sub payload {
+    my $self = shift;
+    $self->{"_payload"};
+};
+
+sub is_leaf {
+    my $self = shift;
+    !(defined $self->{"child0"} || defined $self->{"_child1"});
+};
+
+sub is_orphan {
+    my $self = shift;
+    !defined $self->{"_parent"};
+};
+
+sub depth {
+    my $self = shift;
+    my $parent = $self->{"_parent"};
+    if (defined $parent) {
+        return 1 + $parent->depth;
+    }
+    else {
+        return 0;
+    };
+};
+
+sub below {
+    my $self = shift;
+    my $left_child = $self->{"_child0"};
+    my $right_child = $self->{"_child1"};
+    if (!defined $left_child && !defined $right_child) {
+        return 0;
+    }
+    else {
+        my $left_below = $left_child->below;
+        my $right_below = $right_child->below;
+        if ($left_below > $right_below) {
+			return 1 + $left_below;
+        }
+        else {
+			return 1 + $right_below;
+        }
+    };
+};
+
+sub printable {
+    $_ = shift;
+    if (/[^!#-%'-\/1-~]/) {
+        return sprintf "&%02X", unpack "C", $_;
+    }
+    else {
+        return $_;
+    };
+};
+
+sub cumulative_payload {
+    my $self = shift;
+    if (!defined $self) {
+        return ();
+    };
+    
+    my $left_child = $self->{"_child0"};
+    my $right_child = $self->{"_child1"};
+    my $payload = $self->{"_payload"};
+    my @payload = defined $payload ? (printable $payload) : ();
+    my (@left_cpl, @right_cpl);
+    
+    if (!defined $left_child && !defined $right_child) {
+        return @payload;
+    }
+    elsif (defined $left_child && !defined $right_child) {
+        @left_cpl = cumulative_payload $left_child;
+        return (@left_cpl, @payload);
+    }
+    elsif (!defined $left_child && defined $right_child) {
+        @right_cpl = cumulative_payload $right_child;
+        return (@payload, @right_cpl);
+    }
+    else {
+        @left_cpl = cumulative_payload $left_child;
+        @right_cpl = cumulative_payload $right_child;
+        return (@left_cpl, @payload, @right_cpl);        
+    };
+};
+
+sub path_to {
+    my $self = shift;
+    my $parent = $self->{"_parent"};
+    if (defined $parent) {
+        if ($parent->{"_child0"}->{"_serial"} == $self->{"_serial"}) {
+			return $parent->path_to . "0";
+        }
+        else {
+			return $parent->path_to . "1";
+        } 
+    }
+    else {
+        return "";
+    };
+};
+
+1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+#############################  HUFFMAN TREE CLASS  #############################
+
+package HuffmanTree;
+use strict;
+use Data::Dumper;
+require Exporter;
+
+use constant { TRUE => "1", FALSE => "" };
+
+our @ISA = qw/Exporter/;
+our @EXPORT_OK = qw/new_node/;
+
+sub new {
+    my $proto = shift;                  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    my $class = ref($proto) || $proto;  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+    my $self = { "_nodes" => [],
+                 "_root" => undef };
+    
+    bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    return $self;
+};
+
+sub attach_node {
+    my $self = shift;
+    my $node = shift;
+    my $pos = scalar $self->{"_nodes"};
+    $node->{"_tree"} = $self;
+    $node->{"_tree_pos"} = $pos;
+    push @{$self->{"_nodes"}}, $node;
+    $self;
+};
+
+sub set_root {
+    my $self = shift;
+    my $node = shift;
+    $self->{"_root"} = $node;
+    $self;
+};
+
+sub root {
+    my $self = shift;
+    $self->{"_root"};
+};
+
+sub nodes {
+    my $self = shift;
+    $self->{"_nodes"};
+};
+
+sub size {
+    my $self = shift;
+    scalar (@{$self->{"_nodes"}});
+};
+
+# sub orphans {
+#     my $self = shift;
+#     my $node;
+#     print "argument for orphans is $self\n";
+#     #print Dumper $self; 
+#     my @orphans;
+#     my @nodes = @{$self->{"_nodes"}};
+#     # print Dumper \@nodes;
+#     foreach $node (@nodes) {
+#         #print "Node is $node\n";
+#         #print Dumper \$node;
+#         push @orphans, $node if $node->is_orphan;
+#     };
+#     @orphans;
+# };
+
+sub orphans {
+    my $self = shift;
+    my @orphans;
+    foreach (@{$self->{"_nodes"}}) {
+        push @orphans, $_ if $_->is_orphan;
+    };
+    @orphans;
+};
+
+sub leaves {
+    my $self = shift;
+	my @leaves;
+    foreach (@{$self->{"_nodes"}}) {
+		push @leaves, $_ if $_->is_leaf;
+	};
+	@leaves;
+};
+
+sub naked {
+    my $self = shift;
+    my @naked;
+    foreach (@{$self->{"_nodes"}}) {
+        push @naked, $_ if $_->is_naked;
+    };
+};
+
+sub get_by_pos {
+    my $self = shift;
+    my $pos = shift;
+    $self->{"_nodes"}[$pos];
+};
+
+1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+##############################  THE MAIN PROGRAM  ##############################
+
+package main;
+
+my %OPTIONS;
+getopts "d:i:o:v", \%OPTIONS;
+
+my ($word, %word, @words, %dict, $saving, %saving);
+
+my $filename    = $OPTIONS{"i"};
+my $CHUNK_SIZE  = 256;
+my $OUTPUT_FILE = $OPTIONS{"o"};
+my $DIGRAPH_MIN = $OPTIONS{"d"};
+my $VERBOSE     = $OPTIONS{"v"};
+my $data = "";
+my $need_label = FALSE;
+
+my (@dict_table, @msg_table, @dict_source, @msg_source);
+my ($letter1, $letter2, $digraph, $data1);
+my $message = 0;
+
+my ($length, $char, $freq, %freq, $chars, $i);
+my ($left_child, $right_child, $j);
+
+my ($tree, @orphans, @leaves, $node);
+my ($tree_size, $orphans, %path, $leaves, $done);
+
+my ($payload, $printable, @payload, $depth, $serial, $below, $path_to, $deepest);
+my (%path_to_char);
+
+#########################  BEGIN FUNCTION DEFINITIONS  #########################
+
+sub times_seen {
+    my $haystack = shift;
+    my $haystack1;
+    my $needle = shift;
+    my $times_seen = 0;
+    ++$times_seen  while $haystack =~ /$needle/g;
+    
+    if (FALSE) {
+        $haystack1 = $haystack;
+        $haystack1 =~ s/($needle)/\e[1m$1\e[m/g;
+        print $haystack1;
+    };
+    
+    $times_seen;
+};
+
+sub make_equs {
+    my $data = shift;
+    my $output = "";
+    my $sep = "    ";
+    my ($head);
+    while ($data) {
+        if ($data =~ /^([ -!#-~]+)(.*)$/) {
+            $head = $1;
+            $data = $2;
+            #printf "Data begins with \"%s\"\n", $head;
+            $output .= $sep . sprintf "EQUS \"%s\"", $head;
+            $sep = ":";
+        }
+        else {
+            $head = unpack "C", substr $data, 0, 1;
+            $data = substr $data, 1;
+            #printf "Data begins with %d = &%02X\n", $head, $head;
+            $output .= $sep . sprintf "EQUB &%02X", $head;
+            $sep = ":";
+        };
+    };
+    $output .= "\n";
+};
+
+sub make_equb {
+    my $data = shift;
+    my $output = "";
+    my $max_width = shift || 80;
+    my $indent = shift // 4;
+    my $sep = "";
+    my $line_so_far = " " x $indent;    
+    my ($head, $leftover, $equ, $width_so_far, $avail);
+    
+    while ($data) {
+		$head = unpack "C", substr $data, 0, 1;
+		$data = substr $data, 1;
+		#printf "Data begins with %d = &%02X\n", $head, $head;
+		#$output .= $sep . sprintf "EQUB &%02X", $head;
+		#$sep = ":";
+		$equ = sprintf "EQUB &%02X", $head;
+        if (length "$line_so_far$sep$equ" > $max_width) {
+            $output .= "$line_so_far\n";
+            $line_so_far = " " x $indent . $equ;
+        }
+        else {
+            $line_so_far .= "$sep$equ";
+        };
+        $sep = ":";
+    };
+    $output .= "$line_so_far\n";
+};
+
+sub dict_entry {
+    my $data = shift;
+    my $output = "";
+    my $sep = "    ";
+    my ($head, $tail);
+
+    # Lower case letter with trailing space => &00-&1F 
+    $data =~ s/([a-z]) $/pack "C", (unpack "C", $1) & 0x1f/e;
+    # Set high bit of last character    
+    $data =~ s/(.)$/pack "C", (unpack "C", $1) | 0x80/e;
+    
+    while ($data) {
+        if ($data =~ /^([ -!#-~]+)(.*)$/) {
+            $head = $1;
+            $data = $2;
+            #printf "Data begins with \"%s\"\n", $head;
+            $output .= $sep . sprintf "EQUS \"%s\"", $head;
+            $sep = ":";
+        }
+        else {
+            $head = unpack "C", substr $data, 0, 1;
+            $data = substr $data, 1;
+            #printf "Data begins with %d = &%02X\n", $head, $head;
+            $output .= $sep . sprintf "EQUB &%02X", $head;
+            $sep = ":";
+        };
+    };
+    $output .= "\n";
+};
+
+sub printable {
+    $_ = shift;
+    return "" unless defined $_;
+    if (/[^!#-%'-~]/) {
+        return sprintf "&%02X", unpack "C", $_;
+    }
+    else {
+        return $_;
+    };
+};
+
+sub compress {
+	my $text = shift;
+	my $bits = "";
+    my $chars = "";
+    my $path;
+    my ($printable, $byte, $i);
+	foreach $char (split //, $text) {
+		$printable = printable $char;
+		$path = $path_to_char{$printable};
+		# printf "Path to %-6s is '%s'\n", "'$printable'", $path;
+		$bits .= $path;
+	};
+	# printf "Stream of bits is '%s'\n", $bits;
+	# printf "Length of stream is %d\n", length $bits;
+	for ($i = 0; $i < length $bits; $i += 8) {
+		$byte = substr "${bits}0000000", $i, 8;
+		# print "$byte ";
+		$chars .= pack "B8", $byte;
+	};
+	$chars;
+};
+
+
+##########################  END FUNCTION DEFINITIONS  ##########################
+
+#############################  READ THE DATA FILE  #############################
+
+if ($filename) {
+    my $chunk;
+    open DATA,"<", $filename or die "Could not open $filename: $!";
+    while (!eof DATA) {
+        read DATA, $chunk, $CHUNK_SIZE;
+        $data .= $chunk;
+    };
+    close DATA;
+};
+$length = length $data;
+
+if ($DIGRAPH_MIN) {
+    foreach $letter1 ("a" .. "z") {
+	    foreach $letter2 ("a" .. "z") {
+	        $digraph = "$letter1$letter2";
+	        $freq = times_seen $data, $digraph;
+	        if ($freq > $DIGRAPH_MIN) {
+	            $freq{$digraph} = $freq;
+                #$data =~ s/$digraph//g;
+    	    };
+    	};
+    };
+};
+
+foreach $char (split //, $data) {
+    ++$freq{$char};
+};
+$chars = scalar keys %freq;
+
+printf "Total characters in input  : %d\n", $length;
+printf "Number of unique characters: %d\n", $chars;
+
+$tree = new HuffmanTree;
+
+foreach $char (sort {$freq{$b} <=> $freq{$a} || $a cmp $b} keys %freq) {
+    $freq = $freq{$char};
+    # $payload = printable $char;
+    $payload = $char;
+    $printable = printable $payload;
+    print "Adding a leaf node: ";
+    printf "%-4.4s %4d  %5.2f%%\n", $printable, $freq, 100 * $freq / $length;
+    $node = new HuffmanTree::Node($freq, $payload);
+    $tree->attach_node($node);
+};
+
+# print Dumper \$tree;
+
+# exit;
+
+$done = FALSE;
+while (!$done) {
+    @orphans = $tree->orphans;
+	@orphans = sort {$a->freq <=> $b->freq || $a->below <=> $b->below} @orphans;
+	#                rarest to commonest      tiebreak on shortest to longest
+	$tree_size = $tree->size;
+	$orphans = @orphans;
+	$leaves = scalar($tree->leaves);
+
+	printf "The tree has %d nodes of which %d are leaves and %d are orphans.\n",
+			$tree_size, $leaves, $orphans;
+
+	if ($orphans > 1) {
+		my $orphan1 = $orphans[0];
+		my $orphan2 = $orphans[1];
+		my $print1 = join "|", $orphan1->cumulative_payload;
+		my $print2 = join "|", $orphan2->cumulative_payload;
+		#my $print1 = printable $orphan1->payload;
+		#my $print2 = printable $orphan2->payload;
+	
+		printf "The least likely orphan is: '%s' (%d)\n", $print1, $orphan1->freq;
+		printf "The next least likely   is: '%s' (%d)\n", $print2, $orphan2->freq;
+
+		my $new_node = new HuffmanTree::Node(0);
+		# left = likely, right = rare
+		$new_node->set_right_child($orphan1);
+		$new_node->set_left_child($orphan2);
+		$tree->attach_node($new_node);
+	}
+	else {
+	    $tree->set_root($orphans[0]);
+		$done = TRUE;
+	};
+};
+
+#print Dumper \$tree;
+
+@leaves = ();
+foreach $node (@{$tree->nodes}) {
+	@payload = $node->cumulative_payload;
+    # $payload = $node->payload;
+    $freq = $node->freq;
+    $depth = $node->depth;
+    $serial = $node->serial;
+    $below = $node->below;
+    $path_to = $node->path_to;
+
+	$payload = join "|", @payload;
+
+    if ($node->is_leaf) {
+		push @leaves, $node;
+		$path{$path_to} = $node;
+    };
+    
+    if (!defined $deepest || $deepest < $depth) {
+        $deepest = $depth;
+    };
+    
+    printf "Node #%d: path '%s': depth %d: below %d: (%d) '%s'\n",
+        $serial, $path_to, $depth, $below, $freq, $payload;
+};
+
+printf "Deepest depth is %d.\n", $deepest;
+
+print "\n";
+
+print ".tree\n";
+if ($OUTPUT_FILE) {
+    open FH, ">", $OUTPUT_FILE or die "Could not open $OUTPUT_FILE: $!";
+    print FH ".tree\n";
+};
+
+$tree_size = $tree->size;
+for ($i = $tree_size - 1; $i >= 0; --$i) {
+    $node = $tree->get_by_pos($i);
+    $left_child = $node->left_child;
+    $right_child = $node->right_child;
+    $payload = $node->payload;
+    if (defined $payload) {
+        $char = unpack "C", $payload;
+        $printable = printable $payload;
+        printf "    EQUB &00:EQUB &%02X  \\  PAYLOAD %-4s\n", $char, $printable;
+        if ($OUTPUT_FILE) {
+            printf FH "    EQUB &00:EQUB &%02X  \\  PAYLOAD %-4s\n", $char, $printable;
+        };
+    }
+    else {
+        my $l = $tree_size - $left_child->serial;
+        my $r = $tree_size - $right_child->serial;
+        printf "    EQUB &%02X:EQUB &%02X  \\  LEFT %d RIGHT %d\n",
+            2 * $l, 2 * $r, $l, $r;
+        if ($OUTPUT_FILE) {
+            printf FH "    EQUB &%02X:EQUB &%02X  \\  LEFT %d RIGHT %d\n",
+                2 * $l, 2 * $r, $l, $r;
+        };
+    };
+};
+
+# exit;
+
+my (@valid_codes, $full_16bits, $high_byte, $low_byte);
+my (@chars);
+
+#print ".valid_codes\n";
+foreach (sort {length $a <=> length $b || $b <=> $a} keys %path) {
+    $payload = $path{$_}->payload;
+    $char = unpack "C", $payload;
+    $freq = $path{$_}->freq;
+    $path_to = $path{$_}->path_to;
+    $printable = printable $payload;
+    $path_to_char{$printable} = $path_to;
+    
+    $full_16bits = substr "${path_to}000000000000", 0, 12;
+    $full_16bits .= sprintf "%04b", length $path_to;
+    #printf "%-16s  %-16s  %-4.4s  %6d\n", $path_to, $full_16bits, $printable, $freq;
+    $high_byte = unpack "C", pack "B8", substr $full_16bits, 0, 8;
+    $low_byte = unpack "C", pack "B8", substr $full_16bits, 8, 8;
+    #$low_byte = $low_byte & 0xf0 | length $path_to;
+    
+    #printf "    EQUW &%04X  \\  %16.16s\n", 256 * $high_byte + $low_byte, $full_16bits;
+    #printf "    EQUB &%02X    \\  %s\n", $char, $printable;
+
+    #push @valid_codes, sprintf "    EQUW &%04X  \\  %16.16s\n",
+    #                   256 * $high_byte + $low_byte, $full_16bits;
+    #push @chars, sprintf "    EQUB &%02X  \\  %s\n", $char, $printable;
+};
+
+# print ".valid_codes\n";
+# print join "", @valid_codes;
+# print "\n";
+# print ".chars\n";
+# print join "", @chars;
+
+my ($msg, $compressed);
+$i = 0;
+
+foreach $msg (split /\n/, $data) {
+    $msg = compress "$msg\n";
+    printf ".msg%d\n", $i++;
+    $_ =  make_equb $msg;
+    print;
+    if ($OUTPUT_FILE) {
+        print FH;
+    };
+};
+
+if ($OUTPUT_FILE) {
+    close FH;
+};
+
+exit;
