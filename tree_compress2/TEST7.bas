@@ -6,14 +6,13 @@
    60*K.2CALL&7803|M
   100stream_ptr=&70
   110stream_bit=&72
-  120dest=&73
-  130dest_bit=&74
-  140get_stream_bit=&7800
-  150reset_dest=&7803
-  160valid=&7B00
+  120tree_pos=&73
+  130reset_tree_pos=&7803
+  140disp_char=&7806
+  150select_msg=&7809
   200PROCpoke(stream_ptr,&7000)
   210?stream_bit=0
-  220?dest=0:?dest_bit=0
+  220?tree_pos=0
  9990END
 11000PROCpoke(stream_ptr,&7000)
 11010?stream_bit=0
