@@ -35,7 +35,7 @@ The input file should consist of just a series of newline-separated messages.  I
 
 The output file will consist of two sections of BeebAsm source code; representing the tree which will be used to decode the compressed text, and the individual compressed messages themselves.  These can be pasted into `stream4.6502` (or your game code based on it).
 
-# TEST7.bas
+## TEST7.bas
 
 This is a simple BASIC wrapper around the tree and uncompression code.
 
@@ -47,3 +47,7 @@ CALL select_msg
 A%=A%+1
 CALL select_msg
 ```
+
+## advtest1
+
+This is a message file containing some room descriptions from an unfinished game by the author, used as a real-life example to test the compression code.
