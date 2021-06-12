@@ -21,6 +21,14 @@ To extract a bit from the stream, we read the byte in memory pointed to by `stre
 
 This is a Perl script to take some input data, and generate a Huffman tree and the compressed data using it, ready to paste into BeebAsm source code.
 
+First of all, the frequency of each character is counted, and a leaf node is created for each individual character, with the character as its _payload_ and the number of times it occurred in the input file as its _freq_.
+
+We then build the tree from the leaves towards the root, as follows.  First we select the two least-frequently occuring nodes; and then we create a new node, with those as its right and left children, the sum of their frequencies as its frequency and no payload of its own, and add it to the tree.  We keep going until we have only one node remaining, and then call that the root of the tree.
+
+To generate the output, we reverse the tree so that node 0 is the root  (this means we can use 0, which is especially easy to spot, as a special value to indicate "no child node" since nothing should ever link back to the root, as a matter of definition)  and the leaves appear last.  Each node has a two-byte record representing its left and right children, if present; or &00 for the left child and the payload where the right child should be.  Since the records are 2 bytes long, the values we store are twice the node numbers to which they refer; so if node 0 has 01 is its left child and 02 as its right child, it will contain the values &02 and &04.  This allows us to load the value representing the current position on the tree straight into X; then `LDA tree,X` will load the accumulator with the position of the left child node, or `LDA tree+1,X` will load A with the position of the right child node.
+
+The messages are compressed by looking up the path to the node representing each character, and appending this to the bit stream.  The resulting string of 1s and 0s has seven more zeros appended, and is then sliced up into eight-character chunks.  These are treated as binary bytes and appended to a string representing the compressed data.  Lastly, this is converted to EQUB statements and split into lines shorter than 80 characters for neatness.
+
 ### USAGE
 
 ```
