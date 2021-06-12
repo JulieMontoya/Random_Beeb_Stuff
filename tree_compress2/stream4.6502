@@ -378,6 +378,7 @@ PRINT "reset_tree_pos =", ~reset_tree_pos
 PRINT "disp_char =", ~disp_char
 PRINT "select_msg =", ~select_msg
 PRINT "tree =", ~tree
+PRINT "code_end =", ~_code_end-tree
 
 \\  DEDICATED TO THE PUBLIC DOMAIN 2021 BY JULIE KIRSTY LOUISE MONTOYA
 \\  <bluerizlagirl@gmail.com>  NO RIGHTS RESERVED
