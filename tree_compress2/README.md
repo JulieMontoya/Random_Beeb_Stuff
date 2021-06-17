@@ -17,6 +17,14 @@ To read a character, we first initialise `tree_pos` to point to the root node.  
 
 To extract a bit from the stream, we read the byte in memory pointed to by `stream_ptr`, `AND` it with a value dependent on the value in `stream_bit` and store the processor status flags on the stack while we update `stream_bit` and maybe increase `stream_ptr` if we went past 7 and back to 0.  We then restore the processor status and update `tree_pos` with either the left or right child node, dependent on the result of the `AND` operation in the Z flag.  On return, the new position on the tree will be in `tree_pos`, and also in the accumulator.
 
+## stream6.6502
+
+This is an improved version of the uncompression code with a further optimisation, effectively extending it to support 127 leaf nodes.
+
+This time, the tree table stores _either_ the index of the next node down the tree _or_, where the next node on one side would be a leaf, its payload  (so we do not actually need to store leaf nodes at all).  Since each node's record is 2 bytes long, we can use bit 0 = 0 to indicate a node with children, or bit 0 = 1 to indicate a payload.
+
+After extracting each bit, we test bit 0 of `tree_pos`.  If 0, we read another bit.  If 1, we perform an `LSR A` and then display the character.
+
 ## make_huffman_tree
 
 This is a Perl script to take some input data, and generate a Huffman tree and the compressed data using it, ready to paste into BeebAsm source code.
@@ -28,6 +36,10 @@ We then build the tree from the leaves towards the root, as follows.  First we s
 To generate the output, we reverse the tree so that node 0 is the root  (this means we can use 0, which is especially easy to spot, as a special value to indicate "no child node" since nothing should ever link back to the root, as a matter of definition)  and the leaves appear last.  Each node has a two-byte record representing its left and right children, if present; or &00 for the left child and the payload where the right child should be.  Since the records are 2 bytes long, the values we store are twice the node numbers to which they refer; so if node 0 has 01 is its left child and 02 as its right child, it will contain the values &02 and &04.  This allows us to load the value representing the current position on the tree straight into X; then `LDA tree,X` will load the accumulator with the position of the left child node, or `LDA tree+1,X` will load A with the position of the right child node.
 
 The messages are compressed by looking up the path to the node representing each character, and appending this to the bit stream.  The resulting string of 1s and 0s has seven more zeros appended, and is then sliced up into eight-character chunks.  These are treated as binary bytes and appended to a string representing the compressed data.  Lastly, this is converted to EQUB statements and split into lines shorter than 80 characters for neatness.
+
+## make_huffman_tree2
+
+This is a modified Perl script to create the shortened version of the tree as used by `stream6.6502`.  Child nodes with children of their own are indicated by even values; child nodes which are leaf nodes are indicated by odd values.  This is done by doubling the ASCII code and adding 1, equivalent to `ORA #1` followed by `ROL A`.
 
 ### USAGE
 
