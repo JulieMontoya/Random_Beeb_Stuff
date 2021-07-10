@@ -6,6 +6,13 @@ This is a simple test game to show how my adventure creation system works.
 
 The game is set in eight rooms.  The object of the game is to bake a birthday cake.  In order to acquire the ingredients, equipment and energy to complete this task, the player must search for items, solve puzzles and avoid flesh-burning acid, death at the beak of a misanthropic avian menace, or just by good old-fashioned falling over in the dark.
 
+## BUILDING IT ##
+```
+$ sqlite3 birthday.sqlite3 < birthday.s3t
+$ ./make_huffman_tree5 -qbirthday -w
+$ ./pack_database -qbirthday -obirthday_data
+$ beebasm -i abengine2.6502 -di birthday_base.ssd -do birthday_adv.ssd
+```
 
 
 ## The Machine Code "Engine"
