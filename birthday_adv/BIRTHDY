@@ -1,0 +1,145 @@
+   10MODE7
+   15D%=0:E%=0:I%=0:M%=0:N%=0:R%=0:V%=0
+   20HIMEM=&4A00
+   30*L.M.ABENGIN
+   40*L.D.BIRTHDY
+   50*K.1HELP|M
+   60*K.2INV|M
+   70*K.3TAKE|M
+   80stream_ptr=&70
+   90loc=&5B80
+  100light=&5F01
+  110next_lt=&5F11
+  120cmdbuf=&900
+  130init_game=&5500
+  140select_room=&5503
+  150art_light=&5506
+  160disp_desc=&5509
+  170disp_exits=&550C
+  180list_objects=&550F
+  190get_cmd=&5512
+  200action_cmd=&5515
+  210inventory=&5518
+  220get_state_bit=&551B
+  230clear_state_bit=&551E
+  240set_state_bit=&5521
+  250select_msg=&5524
+  260select_sysmsg=&5527
+  270test_avail=&552A
+  280test_avail_X=&552D
+ 1000CLS
+ 1010CALLinit_game
+ 1020REPEAT
+ 1030CALLselect_room
+ 1040CALLart_light
+ 1050CALLdisp_desc
+ 1060CALLlist_objects
+ 1070?&82=0
+ 1080W%=USRget_cmd
+ 1090IF?cmdbuf<33THENV%=12:E%=0
+ 1100REMPRINT"V%=";V%;" M%=";M%;" N%=";N%;" E%=";E%;" NR=";D%;" I%=&";~I%
+ 1110IFV%>0ANDV%<12AND(R%=1ANDD%=4ORR%=4ANDD%=1)PROCacid
+ 1120IFR%=8ANDV%=14PROChen
+ 1130IFV%>0ANDV%<12ANDD%=8ANDloc?1=0ANDFNb(1)PRINT"Something you are carrying won't fit!":V%=0
+ 1140IF?light=0AND(V%>0ANDV%<11)PRINT"You stumble in the dark and break your"'"neck!":E%=10
+ 1150IF?light=0ANDV%=11PRINT"You carefully retrace your steps back"'"into the light....."
+ 1155IFR%=6ANDV%=10ANDD%=3PRINT"You fall down through the trapdoor and"'"land on a conveniently-positioned sofa."
+ 1160IFV%=13ANDN%=6ANDR%=1ANDFNb(7)=0ANDFNb(5)PROCm(18):E%=0:V%=0
+ 1170IFV%=13ANDN%=6ANDR%=1ANDFNb(7)<>0ANDFNb(5)PROCm(19):E%=0:V%=0
+ 1180IFV%=17ANDN%=5THENV%=19
+ 1190IFV%=17PROCopen
+ 1200IFV%=18PROCclose
+ 1210IFV%=19PROCsearch
+ 1220IF?cmdbuf=81V%=0:E%=10
+ 1230IFV%=21PROCbend
+ 1240IFV%=22PROCbake
+ 1250IFV%=23PROCins
+ 1260IFV%=24PROChelp
+ 1270IFV%=15ANDN%=3ANDR%=8ANDloc?3=0AND?light<>0PROCsb(11):loc?3=254:PRINT"The hen starts pecking greedily at the"'"bird seed.":V%=0
+ 2000CALLaction_cmd
+ 2010IF?cmdbuf=81THENE%=10
+ 2020UNTILE%=10
+ 2030END
+ 3000DEFPROCacid
+ 3010IFloc?1<>0PROCm(0):E%=10
+ 3020IFloc?1=0ANDFNb(1)=0PROCm(5):E%=10
+ 3030IFloc?1=0ANDFNb(1)<>0PROCm(6):loc?1=254
+ 3040ENDPROC
+ 3050DEFPROCopen
+ 3060E%=2
+ 3070IFN%=1ANDFNa ANDFNb(1)PRINT"It's already open!":E%=0
+ 3080IFN%=1ANDFNa ANDFNb(1)=0PROCsb(1):PRINT"You open the umbrella.":E%=0
+ 3090ENDPROC
+ 3100DEFPROCclose
+ 3110E%=2
+ 3120IFN%=1ANDFNa ANDFNb(1)=0PRINT"It's already folded!":E%=0
+ 3130IFN%=1ANDFNa ANDFNb(1)PROCcb(1):PRINT"You fold up the umbrella.":E%=0
+ 3140ENDPROC
+ 3150DEFPROChen
+ 3160IF?light=0PROCm(8):E%=10
+ 3170IF?light<>0ANDFNb(11)=0PROCm(7):V%=0
+ 3180ENDPROC
+ 3190DEFPROCsearch
+ 3200E%=7:IFFNa THENE%=9
+ 3210IFN%=5ANDR%=1ANDFNb(5)THENE%=9
+ 3220IFN%=5ANDR%=1ANDFNb(5)=0PROCm(11):PROCsb(5):E%=0
+ 3230IFN%=5ANDR%=2ANDFNb(4)THENE%=9
+ 3240IFN%=5ANDR%=2ANDFNb(4)=0PROCm(11):loc?3=2:loc?4=2:PROCsb(4):E%=0
+ 3250IFN%=8ANDR%=3ANDFNb(6)THENE%=9
+ 3260IFN%=8ANDR%=3ANDFNb(6)=0PROCm(10):loc?14=R%:PROCsb(6):E%=0
+ 3270ENDPROC
+ 3280DEFPROCshake
+ 3290E%=7:IFFNa THENE%=11
+ 3300IFN%=9ANDFNb(9)=0PROCm(12):E%=0
+ 3310ENDPROC
+ 3320DEFPROCbend
+ 3330E%=7:IFFNa THENE%=2
+ 3340IFN%=9ANDFNb(9)=0PROCm(13):PROCsb(9):E%=0
+ 3350ENDPROC
+ 3360DEFPROCins
+ 3370E%=7:IFFNa THENE%=2
+ 3380IFN%=14ANDFNa AND(R%<>1ORFNb(5)=0)PRINT"There is nowhere suitable to insert it.":E%=0
+ 3390IFN%=14ANDFNa ANDR%=1ANDFNb(5)PROCm(14):loc?14=254:PROCsb(7):E%=0
+ 3400ENDPROC
+ 3410DEFPROCbake
+ 3420E%=2
+ 3430IFR%<>2PRINT"You see no oven!":E%=0
+ 3440IFR%=2ANDN%=4AND(FNh(4)=0ORFNh(7)=0ORFNh(13)=0)PROCm(15):E%=0
+ 3450IFR%=2ANDN%=4ANDFNh(4)ANDFNh(7)ANDFNh(13)ANDFNb(7)=0PROCm(16):E%=0
+ 3460IFR%=2ANDN%=4ANDFNh(4)ANDFNh(7)ANDFNh(13)ANDFNb(7)PROCm(17):E%=10
+ 3470ENDPROC
+ 3480DEFPROChelp
+ 3490H%=0
+ 3500IF(R%=1ANDFNb(5)=0ORR%=2ANDFNb(4)=0ORR%=3ANDFNb(6)=0)PRINT"Try SEARCHing something!":H%=1
+ 3510IF?light=0PRINT"It's safe to go BACK.":H%=1
+ 3520IFR%=8ANDFNb(11)=0AND?light<>0PRINT"You could distract her with something.":H%=1
+ 3530IF(R%=5ORR%=6)ANDFNb(9)=0PRINT"Don't worry about what you CAN'T do."'"Do the only thing you CAN do.":H%=1
+ 3540IFR%=4PRINT"TAKE on its own will pick up the first"'"item found.":H%=1
+ 3550IFH%=0PRINT"Try EXAMINEing things."
+ 3560V%=0:E%=0
+ 3570ENDPROC
+ 9990END
+10000DEFFNpeek(P%)
+10010Q%=!P%AND&FFFF:IFQ%>32767Q%=Q%OR&FFFF0000
+10020=Q%
+10030DEFPROCpoke(P%,Q%)
+10040!P%=!P%AND&FFFF0000ORQ%AND&FFFF
+10050ENDPROC
+10060DEFFNb(A%)
+10070=(USRget_state_bit AND&2000000)=0
+10080DEFPROCsb(A%)
+10090CALLset_state_bit
+10100ENDPROC
+10110DEFPROCcb(A%)
+10120CALLclear_state_bit
+10130ENDPROC
+10140DEFPROCm(A%)
+10150CALLselect_msg
+10160ENDPROC
+10170DEFPROCsm(A%)
+10180CALLselect_sysmsg
+10190ENDPROC
+10200DEFFNa
+10210=(USRtest_avail AND&2000000)<>0
+10220DEFFNh(X%)
+10230=(USRtest_avail_X AND&2000000)<>0
