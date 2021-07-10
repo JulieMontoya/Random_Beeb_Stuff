@@ -1,0 +1,1688 @@
+\  ADVEBUILDER GAME ENGINE
+\
+\  THIS IMPLEMENTS MOVING FROM ROOM TO ROOM, COLLECTING AND
+\  EXAMINING OBJECTS, SAVING AND RESTORING
+\
+\  YOU JUST NEED TO ADD THE PUZZLE LOGIC IN BASIC!
+
+\  VARIABLES
+
+stream_ptr = &70    	\  pointer to byte in stream
+stream_bit = &72    	\  bit within byte in stream
+tree_pos   = &73      	\  current position on tree
+bits_read  = &73     	\  also used for extracted bits
+caps_flag  = &74     	\  capitalisation flag
+tempA      = &75        \  temporary store for A
+scr_width  = &76        \  width of text on screen so far
+wbuf_ptr   = &77        \  pointer in word buffer
+temp_obj   = &78
+
+cmd_ptr    = &7A        \ pointer to command buffer
+word_ptr   = &7C        \ pointer to words
+tempX      = &7E
+tempY      = &7F
+
+place_val  = &80
+digits     = &81
+show_desc  = &82
+obj_count  = &83
+uio_count  = &84
+
+wordbuf    = &9C0       \  word buffer
+
+LWIDTH     = 40         \  line width
+LIGHT_SRC  = 9          \  light source
+
+bas_var_D = &410        \  basic variable D% = destination
+bas_var_E = &414        \  basic variable E% = error
+bas_var_I = &424        \  basic variable I% = index of word
+bas_var_V = &458    	\  basic variable V% = verb
+bas_var_M = &434    	\  basic variable M% = modifier
+bas_var_N = &438    	\  basic variable N% = noun
+bas_var_R = &448        \  basic variable R% = room
+
+cmdbuf = &900
+
+game_data = &4A00
+
+osasci = &FFE3      	\  
+osnewl = &FFE7
+osword = &FFF1
+
+GUARD &6000             \  Don't let anything stray into screen memory
+
+\  ORG IS EQUIVALENT TO SETTING P%, ON A REAL BEEB
+
+ORG &5500
+
+._code_begin
+
+.init_game
+    JMP real_init_game
+.select_room
+    JMP real_select_room
+.art_light
+    JMP real_art_light
+.disp_desc
+    JMP real_disp_desc
+.disp_exits
+    JMP real_get_exits
+.list_objects
+    JMP real_list_objects
+.get_cmd
+    JMP real_get_cmd
+.action_cmd
+    JMP real_action_cmd
+.inventory
+    JMP real_inventory
+.get_state_bit
+    JMP real_get_state_bit
+.clear_state_bit
+    JMP real_clear_state_bit
+.set_state_bit
+    JMP real_set_state_bit
+.select_msg
+    JMP real_select_msg
+.select_sysmsg
+    JMP real_select_sysmsg
+.test_avail
+    JMP real_test_avail
+.test_avail_X
+    JMP real_test_avail_X
+
+    
+.match_verb
+    JMP real_match_verb
+.match_noun
+    JMP real_match_noun
+.reset_cmd_buffer
+    JMP real_reset_cmd_buffer
+.parse_cmd
+    JMP real_parse_cmd
+
+.get_bit_offset
+    JMP real_get_bit_offset
+
+.disp_msg
+    JMP real_disp_msg
+.select_obj
+    JMP real_select_obj
+.update_obj_state
+    JMP real_update_obj_state
+    
+.descend_tree
+    JMP real_descend_tree
+.reset_tree_pos
+    JMP real_reset_tree_pos
+.disp_char
+    JMP real_disp_char
+.copy_one_bit
+    JMP real_copy_one_bit
+.unpack_room
+    JMP real_unpack_room
+.maybe_auto_cap
+    JMP real_maybe_auto_cap
+    
+    
+\  PARSE A COMMAND
+\
+\  On exit, BASIC variables will be set as follows:
+\    V% => the first word (verb)
+\    M% => the second word (modifier)
+\    N% => the last word (noun)
+   
+.real_parse_cmd
+    JSR real_reset_cmd_buffer
+    LDA #0
+    STA bas_var_V
+    STA bas_var_M
+    STA bas_var_N
+    
+    JSR skip_spaces
+    BCS _pc_end
+    
+    \ now we should be at the first word
+
+._pc_verb    
+    JSR real_match_verb
+    BCS _pc_end
+    AND #&7F
+    STA bas_var_V       \  save first word
+    
+    JSR adv_cmd_ptr_Y
+    JSR skip_spaces
+    BCS _pc_end
+    
+    LDA bas_var_V
+    BEQ _pc_verb
+
+    \ now we should be at the second word
+    
+    JSR real_match_noun
+    BCS _pc_end
+    AND #&7F
+    STA bas_var_M       \  save second word .....
+    STA bas_var_N       \  ..... which is also last word
+
+    \  Now just keep parsing words
+    
+._pc_last_word
+    JSR adv_cmd_ptr_Y
+    JSR skip_spaces
+    BCS _pc_end
+    LDA (cmd_ptr), Y
+    CMP #13
+    BEQ _pc_end
+    
+    \ If we hit this point, that was a real word
+
+    JSR real_match_noun
+    BCS _pc_end
+    AND #&7F
+    STA bas_var_N       \  save last (so far) word
+    BCC _pc_last_word
+    
+._pc_end
+    RTS
+._pc_clc
+    CLC
+    RTS
+
+.real_match_noun
+    LDA #noun_list MOD256
+    STA word_ptr
+    LDA #noun_list DIV256
+    STA word_ptr+1
+    JMP _mw0
+.real_match_verb
+    LDA #verb_list MOD256
+    STA word_ptr
+    LDA #verb_list DIV256
+    STA word_ptr+1
+._mw0
+    LDY #0    
+._mw1
+    LDA cmd_ptr
+    STA bas_var_I
+    LDA cmd_ptr+1
+    STA bas_var_I+1
+    LDA (word_ptr), Y
+    BEQ _mw_end
+    BMI _mw3
+._mw2
+    JSR adv_word_ptr
+    BNE _mw1            \  either BNE succeeded, or INC gave
+                        \  high byte of an address in RAM
+\  HERE WE HAVE A WORD NUMBER AT (word_ptr), Y
+._mw3
+    TAX                 \  save the maybe-matched word number
+    JSR adv_word_ptr
+    LDA (cmd_ptr), Y    \  first char of word in buffer
+    CMP (word_ptr), Y   \  see if it matched
+    BNE _mw_miss
+\  HERE WE HAVE MATCHED THE FIRST BYTE OF A WORD
+._mw4
+    INY
+    LDA (cmd_ptr), Y
+    CMP #33             \  C=0 => end of cmd word
+    BCC _mw5
+    CMP (word_ptr), Y
+    BEQ _mw4            \  keep going as long as it matches
+\  HERE WE FAILED TO MATCH A CHARACTER
+._mw_miss
+    LDY #0
+    BEQ _mw2
+\  HERE WE RAN OUT OF LETTERS IN THE COMMAND WORD
+\  WHICH MEANS WE HAVE A MATCH!
+._mw5
+    TXA
+    CLC
+    RTS
+._mw_end
+    SEC
+    RTS
+
+\  ADVANCE THE WORD LIST POINTER
+
+.adv_word_ptr
+    INC word_ptr        \  increase the low byte
+    BNE _awp1           \  done, if it did not roll over
+    INC word_ptr+1      \  increase the high byte
+._awp1
+    RTS                 \  NB. here Z=0 for sure
+
+\  SKIP SPACES IN COMMAND
+
+.skip_spaces
+
+._ssc0
+    LDY #0
+._ssc1
+    LDA (cmd_ptr), Y
+    CMP #33
+    BCS _ssc4
+    CMP #13
+    BEQ _ssc3
+    INY
+    BNE _ssc1
+._ssc2
+    LDA #0
+._ssc3
+    SEC
+    RTS
+._ssc4
+
+\  FALL THROUGH
+
+\  ADVANCE THE COMMAND POINTER BY Y
+
+.adv_cmd_ptr_Y
+    TYA
+    CLC
+    ADC cmd_ptr
+    STA cmd_ptr
+    BCC _acp1
+    INC cmd_ptr+1
+._acp1
+    LDY #0
+    RTS
+
+.real_reset_cmd_buffer
+    LDA # cmdbuf MOD256
+    STA cmd_ptr
+    LDA # cmdbuf DIV256
+    STA cmd_ptr+1
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  GET A COMMAND
+
+.real_get_cmd
+    LDA #0              \  clear error
+    STA bas_var_E
+    LDA #58
+    JSR osasci
+    LDX #input_cblk MOD256
+    LDY #input_cblk DIV256
+    LDA #0
+    JSR osword
+    
+    JSR real_parse_cmd
+
+\  TEST THE COMMAND
+\
+\  IF THE COMMAND IS A BUILT-IN ONE, WE TEST ITS FEASIBILITY HERE AND
+\  MAYBE SET bas_var_E TO INDICATE AN ERROR IF NECESSARY, BUT WE ARE
+\  NOT DISPLAYING ANYTHING YET.
+\
+\  AS SOON AS WE HAVE SORTED OUT THE EFFECT, WE DROP BACK TO BASIC.
+   
+.test_cmd
+    LDX bas_var_V
+    BEQ _tc_null
+    CPX #11
+    BCS _tc_not_dir
+    LDA exits-1,X
+._tc_dir1
+    STA bas_var_D       \  stash next room
+    JSR sel_rm1         \  see if it is light or dark
+
+\  EVERY ROOM RECORD BEGINS WITH A SINGLE BIT INDICATING WHETHER
+\  OR NOT THE ROOM IS ILLUMINATED.  THIS IS IN THE LEFTMOST BIT
+\  POSITION, SO WILL AFFECT THE N FLAG; - => LIGHT, + => DARK
+ 
+    LDA (stream_ptr),Y  \  we already set Y=0
+    BPL _tc_next_dk     \  branch if leftmost bit = 0
+    LDA #1
+    BNE _tc_next_lt1
+._tc_next_dk
+    TYA
+._tc_next_lt1
+    STA next_lt
+    LDA bas_var_D       \  retrieve next room
+    BNE _tc_exitok
+._tc_noexit
+    LDA #3              \  no exit
+    STA bas_var_E
+._tc_exitok
+    RTS
+    
+._tc_null
+    LDA #1              \  nonsense
+    STA bas_var_E
+    RTS
+
+._tc_not_dir
+    CPX #11
+    BNE _tc_not_back
+._tc_back
+    LDA prev_rm
+    JMP _tc_dir1
+
+._tc_not_back
+    CPX #12
+    BNE _tc_not_look
+    
+._tc_look
+    LDA #255
+    STA show_desc
+    RTS
+    
+._tc_not_look
+    CPX #13
+    BNE _tc_not_exam
+._tc_exam
+    JSR real_test_avail
+    BEQ _tc_ex1
+    LDA #7              \  not here
+    STA bas_var_E
+._tc_ex1
+    RTS
+
+._tc_not_exam
+    CPX #14
+    BNE _tc_not_take
+
+._tc_take
+    LDX bas_var_N
+    BEQ _tc_tk_any
+    LDA object_loc,X
+    CMP bas_var_R
+    BEQ _tc_tk1
+._tc_tk_noh
+    LDA #7              \  not here
+    STA bas_var_E
+    RTS
+._tc_tk1
+    LDA bas_var_N
+    JSR select_obj2
+
+\  EVERY OBJECT RECORD BEGINS WITH A SINGLE BIT INDICATING WHETHER
+\  OR NOT THE OBJECT CAN BE CARRIED.  THIS IS IN THE LEFTMOST BIT
+\  POSITION, SO WILL AFFECT THE N FLAG; - => CAN CARRY, + => CAN'T
+
+    LDA (stream_ptr),Y  \  we already set Y=0
+    BMI _tc_tk2
+    LDA #2              \  can't do
+    STA bas_var_E
+._tc_tk2
+    RTS
+
+\  NO NOUN => TRY TO TAKE NEAREST OBJECT    
+
+._tc_tk_any             \  no noun; try to take nearest object
+    STX tempX
+._tc_tk3
+    LDA object_loc,X    \  see if object is in room
+    CMP bas_var_R
+    BEQ _tc_tk5
+._tc_tk4
+    INX
+    CPX object_loc      \  one more than count of objects
+    BNE _tc_tk3
+    BEQ _tc_tk_noh
+._tc_tk5                \  object is in room; see if or not it
+                        \  can be carried
+    STX temp_obj        \  X is about to get overwritten
+    TXA
+    JSR select_obj2 
+    LDA (stream_ptr),Y
+    PHP                 \  save N flag
+    LDX temp_obj        \  this will stomp on N .....
+    PLP                 \  ..... till we restore it
+    BPL _tc_tk4         \  move on if can't carry
+._tc_tk6
+    STX bas_var_N
+    RTS
+    
+._tc_not_take
+    CPX #15
+    BNE _tc_not_drop
+
+._tc_drop
+    LDX bas_var_N
+    LDA object_loc,X
+    BEQ _tc_dp1
+    LDA #8              \  no carry
+    STA bas_var_E
+._tc_dp1    
+    RTS
+
+._tc_not_drop
+    LDY #0
+    RTS
+
+\  TEST IF OBJECT N% IS AVAILABLE  (CARRIED OR IN ROOM)
+\  on return  Z=0 => OBJECT IS AVAILABLE
+\             Z=1 => NEITHER CARRIED NOR IN ROOM
+
+.real_test_avail
+    LDX bas_var_N
+.real_test_avail_X
+    LDA object_loc,X    \  Z=1 => carried
+    BEQ _ta1
+    CMP bas_var_R       \  Z=1 => in room
+._ta1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  ACTION COMMAND
+\
+\  CHECK THE STATUS IN E%; ANYTHING BUT 0 INDICATES AN ERROR
+
+.real_action_cmd
+    LDA bas_var_E       \  If non-zero, display error message
+    BEQ _ac_no_err
+    JMP real_select_sysmsg
+
+\  IF E% = 0 THEN ASSUME THE COMMAND IS SAFE TO ACTION
+
+._ac_no_err
+    LDX bas_var_V
+    BEQ _ac_null
+    CPX #12             \  back is a direction too
+    BCS _ac_not_dir
+._ac_dir
+    LDA bas_var_R
+    STA prev_rm
+    LDA bas_var_D
+    STA bas_var_R
+    JMP force_desc
+
+._ac_null
+    RTS
+
+._ac_not_dir
+    CPX #12
+    BNE _ac_not_look
+
+._ac_look
+    LDA #255
+    STA show_desc
+    RTS
+
+._ac_not_look
+    CPX #16             \  INVENTORY
+    BEQ real_inventory
+    JMP _ac_not_inv
+
+.real_inventory
+    LDA #5              \  inventory prefix
+    JSR real_select_sysmsg
+    JSR count_obj
+    LDX #1
+._inv1
+    STX temp_obj
+    LDA object_loc,X
+    BNE _inv2
+    LDA #32
+    JSR newwrch
+    JSR newwrch
+    JSR shift_on        \  force capital letter
+    LDA temp_obj
+    JSR obj_short_desc
+    JSR newnewl
+._inv2
+    LDX temp_obj
+    INX
+    CPX object_loc      \  loc[0] => count+1
+    BCC _inv1
+    LDA uio_count
+    BNE _inv4
+    LDA obj_count
+    BNE _inv3
+    LDA #6              \  carrying nothing
+    JSR real_select_sysmsg
+    JSR newnewl
+._inv3
+    RTS
+._inv4
+    JSR say
+    EQUS "  Something picked up in the dark"
+    BRK
+    LDA uio_count
+    CMP #1
+    BEQ _inv5
+    JSR say
+    EQUS " (*"
+    BRK
+    LDA uio_count
+    JSR real_disp_dec
+    LDA #41
+    JSR newwrch
+._inv5
+    LDA #46
+    JSR newwrch
+    JMP newnewl
+
+._ac_not_inv
+    CPX #13
+    BNE _ac_not_exam
+._ac_exam
+    LDA bas_var_N
+    JSR real_select_obj
+    JSR real_update_obj_state
+    LDA obj_exam
+    BEQ _ac_exam_0sp
+    CMP #2
+    BCS _ac_exam_hard
+    LDA bas_var_N
+    JMP real_select_msg
+._ac_exam_hard
+    LDA obj_exam_msg
+    JMP real_select_msg
+._ac_exam_0sp
+    LDA #9              \  nothing special
+    JMP real_select_sysmsg
+    
+._ac_not_exam
+    CPX #14
+    BNE _ac_not_take
+._ac_take
+    LDA light
+    BEQ _ac_take1
+    LDA #0
+    LDX bas_var_N
+    STA object_loc,X
+    JSR say
+    EQUS "You take "
+    BRK
+    JMP _ac_drop1
+._ac_take1
+    LDA #255            \  objects picked up in dark go into room 255
+    LDX bas_var_N
+    STA object_loc,X
+    JSR say
+    EQUS "You grab the nearest object in the dark."
+    BRK
+    JMP newnewl
+    
+._ac_not_take
+    CPX #15
+    BNE _ac_not_drop
+._ac_drop
+    LDA bas_var_R
+    LDX bas_var_N
+    STA object_loc,X
+    JSR say
+    EQUS "You drop "
+    BRK
+._ac_drop1
+    JSR shift_off
+    LDA bas_var_N
+    JSR obj_short_desc
+    LDA #46
+    JSR newwrch
+    JMP newnewl
+    
+._ac_not_drop
+    RTS
+
+\  DISPLAY SHORT ("CARRIED") DESCRIPTION OF AN OBJECT
+
+.obj_short_desc
+    JSR real_select_obj
+    JSR real_update_obj_state
+    LDA obj_sd_addr
+    STA stream_ptr
+    LDA obj_sd_addr+1
+    STA stream_ptr+1
+    JMP real_disp_msg
+
+\  DISPLAY LONG ("IN_ROOM") DESCRIPTION OF AN OBJECT
+
+.obj_long_desc
+    JSR real_select_obj
+    JSR real_update_obj_state
+    LDA obj_ld_addr
+    STA stream_ptr
+    LDA obj_ld_addr+1
+    STA stream_ptr+1
+    JMP real_disp_msg
+
+\  COUNT OBJECTS CARRIED. 
+
+.count_obj
+    LDX #0
+    STX obj_count
+    STX uio_count
+    INX                 \  start with object 1
+._co1
+    LDA object_loc,X
+    BEQ _co4            \  room 0 => carrying
+    CMP #255            \  room 255 => picked up in dark
+    BNE _co5    
+._co2
+    LDA light
+    BNE _co3
+    INC uio_count
+    BNE _co5            \  expect always to branch
+._co3                   \  we know what it is now
+    LDA #0              \  move it to plain carrying
+    STA object_loc,X
+._co4
+    INC obj_count
+._co5
+    INX
+    CPX object_loc      \  loc[0] => total objects + 1
+    BCC _co1
+    RTS
+    
+\  READ A BIT WITHIN THE GAME STATE BITS
+
+.real_get_state_bit
+    JSR real_get_bit_offset
+    LDA state_bits, Y
+    AND bits_LR, X
+    RTS
+
+\  SET A GAME STATE BIT
+
+.real_clear_state_bit
+    JSR real_set_state_bit
+    EOR bits_LR, X
+    STA state_bits, Y
+    RTS
+
+\  CLEAR A GAME STATE BIT
+
+.real_set_state_bit
+    JSR real_get_bit_offset
+    LDA state_bits, Y
+    ORA bits_LR, X
+    STA state_bits, Y
+    RTS
+
+\  ON RETURN:
+\  Y => INDEX TO BYTE
+\  X => INDEX TO BIT WITHIN BYTE
+
+.real_get_bit_offset
+    PHA
+    AND #7
+    TAX
+    PLA
+    LSR A
+    LSR A
+    LSR A
+    TAY
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  HANDLE ARTIFICIAL LIGHT
+\
+\  IF THE LIGHT SOURCE IS ACTIVATED, AND EITHER CARRIED OR IN THE
+\  ROOM WITH THE PLAYER, TREAT THE ROOM AS THOUGH IT WERE LIGHT
+
+.real_art_light
+    LDA #LIGHT_SRC      \  check state of light source
+    JSR real_get_state_bit
+    BEQ _al_dark
+.art_light1
+    LDX #LIGHT_SRC
+    LDA object_loc,X
+    BEQ _al_light       \  branch if carrying light source
+    CMP bas_var_R
+    BNE _al_dark        \  branch if light source not in room
+._al_light
+    LDA #1
+    STA light
+._al_dark
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  DISPLAY ROOM DESCRIPTION
+
+.real_disp_desc
+    LDA show_desc
+    BEQ _dd_no_desc
+    LDA light
+    BEQ _dd_dark
+    JSR count_obj
+    LDA room_desc_addr+1
+    STA stream_ptr+1
+    LDA room_desc_addr
+    STA stream_ptr
+    JMP real_disp_msg
+._dd_no_desc
+    RTS
+._dd_dark
+    LDA #4              \  dark
+    JMP real_select_sysmsg
+
+\  LIST ALL AVAILABLE DIRECTIONS
+\  THIS MAY NOT BE REQUIRED, IF ROOM DESCRIPTIONS INCLUDE MENTION OF
+\  AVAILABLE EXITS, BUT WE ARE COVERING ALL BASES.
+\
+\  DIRECTIONS ARE DISPLAYED WITH A COMMA BETWEEN THEM AND AN "AND"
+\  SIGN BEFORE THE LAST;  North, East & West
+
+.real_get_exits
+    LDX #0
+    STX tempX
+    STX tempY
+    INX
+._gx1
+    LDA exits-1,X
+    BEQ _gx2
+    STX tempX
+._gx2
+    INX
+    CPX #11
+    BCC _gx1
+    
+    \  Now tempX contains last available exit
+    
+    LDX #1
+._gx3
+    LDA exits-1,X
+    BNE _gx4
+    INX
+    CPX #11
+    BCC _gx3
+    JMP osnewl			\  Nothing to display
+._gx4
+    STX tempY
+    
+    \  Now tempY contains first available exit
+    
+    NOP
+    \ RTS
+    
+.real_show_exits
+    LDX #1
+    LDY #0
+._sx1
+    LDA direction_list,Y
+    BNE _sx4			\  if not CHR$(0), maybe print a character
+    CPX tempX           \  see if that was the last available direction
+    BCC _sx1a			\  carry on if not .....
+    JMP osnewl			\  ..... or start a new line and exit
+._sx1a
+    INX					\  if is CHR$(0) move on to next direction
+    CPX tempY           \  see if is first available direction
+    BEQ _sx3			\  ..... which does not need a comma
+    CPX tempX			\  see if is last available direction
+    BNE _sx2
+    LDA #32				\  space
+    JSR osasci
+    LDA #38				\  and sign
+    JMP _sx2a
+._sx2
+    LDA exits-1,X		\  skip comma if exit not available
+    BEQ _sx3
+    LDA #44
+._sx2a
+    JSR osasci
+._sx3
+    INY
+    BNE _sx1			\  go round the loop again
+    
+._sx4
+    LDA exits-1,X
+    BEQ _sx5			\  skip printing if exit not available
+    LDA direction_list,Y
+    JSR osasci
+._sx5
+    INY
+    BNE _sx1
+    \  We should never, ever get here
+    RTS
+
+\  NAMES OF DIRECTIONS IN ORDER.
+\  NOTE EACH ONE HAS A SPACE BEFORE AND A BRK AFTERWARDS.
+
+.direction_list
+    EQUS " North": BRK
+    EQUS " Northeast": BRK
+    EQUS " East": BRK
+    EQUS " Southeast": BRK
+    EQUS " South": BRK
+    EQUS " Southwest": BRK
+    EQUS " West": BRK
+    EQUS " Northwest": BRK
+    EQUS " Up": BRK
+    EQUS " Down": BRK
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  DISPLAY A SINGLE BYTE UNSIGNED DECIMAL NUMBER WITHOUT LEADING ZEROS
+
+.real_disp_dec
+    LDX #0
+    STX digits
+    LDX #100
+    JSR _dd_get_digit   \  return with 100s in A, rest in Y
+    BEQ _dd_get10s      \  skip display if no hundreds
+    JSR _dd_write_digit
+._dd_get10s
+    TYA                 \  this is the remainder modulo 100
+    LDX #10
+    JSR _dd_get_digit
+    BNE _dd_show10s     \  always show tens if not 0
+    LDX digits          \  don't display 0 if no hundreds
+    BEQ _dd_get1s
+._dd_show10s
+    JSR _dd_write_digit
+._dd_get1s
+    TYA                 \  this is the remainder modulo 10
+._dd_write_digit        \  we always display the units
+    CLC
+    ADC #48
+    JSR newwrch
+    INC digits
+    RTS
+._dd_get_digit
+    STX place_val
+    LDX #0
+._dd_try_sub
+    TAY
+    SEC
+    SBC place_val
+    BCC _dd_sub_fail
+    INX
+    BNE _dd_try_sub     \  should never fall through
+._dd_sub_fail
+    TXA                 \  this is the digit
+    RTS
+    
+.real_list_objects
+    LDA show_desc
+    BEQ _lo3
+    LDA light
+    BEQ _lo3
+    LDX #1
+._lo1
+    STX temp_obj
+    LDA object_loc,X
+    CMP bas_var_R
+    BNE _lo2
+    LDA temp_obj
+    JSR obj_long_desc
+._lo2
+    LDX temp_obj
+    INX
+    CPX object_loc      \  holds count of objects + 1
+    BCC _lo1
+._lo3
+    RTS
+
+.real_init_game
+    LDA #0
+    TAX    
+._ig1
+    STA state_bits,X
+    INX
+    BPL _ig1
+    TAX
+._ig2
+    LDA init_loc,X
+    STA object_loc,X
+    INX
+    CPX init_loc        \  this is also count of objects + 1
+    BCC _ig2
+    LDA #1              \  player starts in room #1
+    STA bas_var_R
+    LDA #0              \  "welcome" message
+    JSR real_select_sysmsg
+.force_desc
+    LDA #255
+    STA show_desc       \  Force description
+    JMP newnewl
+
+ALIGN &40
+
+.input_cblk             \  control block for OSWORD &00
+    EQUW cmdbuf         \  input buffer address  (2 bytes)
+    EQUB &7F            \  max length
+    EQUB 32             \  minimum ASCII code
+    EQUB 126            \  maximum ASCII code
+    
+ALIGN &100
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  GAME STATE AREA
+
+.state_bits
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+
+.visited_bits
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+
+.state_bytes
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+    
+.object_loc
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+    EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0: EQUD 0
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  SELECT AND DISPLAY A MESSAGE
+\  A => MESSAGE INDEX
+
+.real_select_msg
+    ASL A
+    TAX
+    LDA msg_table,X
+    STA stream_ptr
+    LDA msg_table+1,X
+    STA stream_ptr+1
+    BNE real_disp_msg
+.real_select_sysmsg
+    ASL A
+    TAX
+    LDA smsg_table,X
+    STA stream_ptr
+    LDA smsg_table+1,X
+    STA stream_ptr+1    
+.real_disp_msg
+    LDA #0
+    STA stream_bit
+.disp_msg1
+    JSR real_disp_char
+    CMP #32
+    BCS disp_msg1
+.end_of_msg
+    RTS
+
+\  DISPLAY A CHARACTER FROM THE STREAM
+
+.real_disp_char
+    JSR real_reset_tree_pos
+    \  now we are at the root of the tree
+.dc1
+    \  Get a bit from the stream and update current node
+    JSR real_descend_tree
+    \  A still contains position on tree
+    BIT bits_LR+7   \ check lowest bit
+    BEQ dc1         \ keep going until it's set
+    LSR A
+    \ JMP osasci
+    JMP real_maybe_auto_cap
+
+\  GET A BIT FROM THE STREAM AND UPDATE POSITION ON
+\  TREE ACCORDINGLY: BRANCH LEFT ON 0, RIGHT ON 1
+\  NB! EXPECTS Y=0
+
+.real_descend_tree
+    JSR real_get_one_bit
+    BEQ _desc_left
+._desc_right
+    LDA tree+1,X \ its right child
+    STA tree_pos
+    RTS
+._desc_left
+    LDA tree,X   \ its left child
+    STA tree_pos
+
+._rts
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  DISPLAY A CHARACTER, AND POSSIBLY CAPITALISE IT
+
+.real_maybe_auto_cap
+    BIT bits_LR+1       \  check bit 6
+    BEQ _ac_is_punct
+    BIT bits_LR + 2     \  check bit 5
+    BEQ _ac_is_cap
+    \  must be a lower-case letter
+    BIT caps_flag
+    BPL _ac_is_punct    \  skip if clear
+    AND #&DF            \  clear bit 5
+._ac_is_cap
+    PHA
+    LDA #0
+._ac_set_cap
+    STA caps_flag
+    PLA
+._ac_not_eos
+    \JMP osasci
+    JMP newwrch
+._ac_is_punct
+    CMP #46             \  full stop
+    BEQ _ac_is_eos
+    CMP #63             \  question mark
+    BEQ _ac_is_eos
+    CMP #33             \  exclamation mark
+    BNE _ac_not_eos
+._ac_is_eos             \  end-of-sentence char
+    PHA
+    LDA #255
+    BNE _ac_set_cap     \  will always branch
+
+.shift_off
+    LDA #0
+    BEQ _so0
+.shift_on
+    LDA #255
+._so0
+    STA caps_flag
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  SELECT A ROOM AND UNPACK ITS DATA
+\  ON RETURN, bas_var_R [=R%] => current room
+\             light           => light status
+\             exits           => exit destinations (10 bytes)
+
+.real_select_room
+    LDA bas_var_R
+    JSR sel_rm1
+.real_unpack_room
+    JSR reset_bits_read
+    TYA
+    TAX
+._clear_exits
+    STA light,X
+    INX
+    CPX#16
+    BCC _clear_exits
+    
+    JSR real_get_one_bit
+    BEQ _room_dark
+    LDA #1
+    STA light
+._room_dark
+    LDX #0
+    STX tempX
+._unp_exit
+    JSR real_get_one_bit
+\  0 => no exit in that direction
+    BEQ _unp_no_exit
+\  10 => 4 bit room offset  11 => 8 bit absolute room
+    JSR real_get_one_bit
+    PHP
+\  Save the zero flag for now. We need to get 4 bits anyway.
+    JSR reset_bits_read
+    JSR copy_4_bits
+\  Now we have 4 bits, see if we need any more
+    PLP \ 1 => we need 4 more bits
+    BNE _unp_exit_long
+    LDA bits_read
+    BIT bits_LR+4       \  bit 3 => negative .....
+    BEQ _exit_offset_pos
+._exit_offset_neg
+    ORA #&F8            \  ..... so set all high bits to extend sign
+._exit_offset_pos
+    CLC
+    ADC bas_var_R
+    JMP _unp_exit1
+._unp_exit_long
+    JSR copy_4_bits
+    LDA bits_read
+._unp_exit1
+    LDX tempX
+    STA exits,X
+._unp_no_exit
+    LDX tempX
+    INX
+    STX tempX
+    CPX #10
+    BCC _unp_exit       \  Repeat for all 10 exits
+    LDA stream_bit      \  See if or not we need to advance
+                        \  to the next byte .....
+    BEQ _unp_no_adv     \  .....  No, we don't .....
+    JSR advance_byte    \  .....  Yes, we do
+._unp_no_adv
+\  Save the stream pointer in room_desc_addr
+    LDA stream_ptr+1
+    STA room_desc_addr+1
+    LDA stream_ptr
+    STA room_desc_addr
+    RTS
+
+\  INITIALISE STREAM POINTER TO DATA FOR ROOM IN ACCUMULATOR
+
+.sel_rm1
+    ASL A
+    TAX
+    LDA room_table,X
+    STA stream_ptr
+    LDA room_table+1,X
+    STA stream_ptr+1
+    LDY #0              \  Might be useful later
+    STY stream_bit
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  SELECT AN OBJECT AND UNPACK ITS DATA
+\  ON RETURN, cur_obj       => object ID
+\             obj_carry     => can carry
+\             obj_st        => states
+\             obj_st_src    => state source
+\             obj_exam      => can examine
+\             obj_exam_msg  => "examine" message
+\             obj_sd_length => short desc length
+\             obj_sd_addr+  => "carried" description addr
+\             obj_ld_addr+  => "in room" description addr
+
+.real_select_obj
+    STA cur_obj
+.select_obj1
+    JSR select_obj2
+.real_unpack_obj
+    JSR reset_bits_read
+    TYA
+    TAX
+._clear_objdata
+    STA obj_carry,X
+    INX
+    CPX#10
+    BCC _clear_objdata
+    
+    \  "Can carry" is 1 bit
+    
+    JSR real_get_one_bit
+    BEQ _obj_nocarry
+    LDA #1
+    STA obj_carry
+._obj_nocarry
+    LDX #0
+    STX tempX
+    
+    \  "Has states" 
+
+    JSR real_get_one_bit
+    BEQ _obj_stateless  \ 0 => stateless
+    JSR real_get_one_bit
+    BEQ _obj_bistate    \ 10 => bi-state object
+
+    \  11 => multi-state object.  State indicator = 6 bits
+        
+    JSR reset_bits_read
+    JSR copy_4_bits
+    JSR copy_2_bits
+    LDA bits_read
+    STA obj_st_src      \  save in state source
+    LDA #2
+    STA obj_st          \  mark it as multi-state
+    BNE _obj_stateless  \  always branches
+._obj_bistate
+    LDA #1
+    STA obj_st          \  mark it as bi-state
+._obj_stateless
+
+    \  Examine-ability
+    
+    JSR real_get_one_bit
+    BEQ _obj_noexam     \  0 => nothing special
+    JSR real_get_one_bit
+    BNE _obj_exam_long
+    \  10 => examine message is same as object #
+._obj_exam_short
+    LDA cur_obj
+    STA obj_exam_msg
+    LDA #1
+    STA obj_exam
+    BNE _obj_noexam     \  will always branch
+    \  11 => following 6 bits give examine message
+._obj_exam_long
+    LDA #2
+    STA obj_exam
+    JSR reset_bits_read
+    JSR copy_4_bits
+    JSR copy_2_bits
+    LDA bits_read
+    STA obj_exam_msg
+._obj_noexam
+
+    LDA stream_bit      \  See if or not we need to advance
+                        \  to the next byte .....
+    BEQ _obj_no_adv
+    \  .....  Yes, we do
+    JSR advance_byte
+._obj_no_adv
+
+    LDA (stream_ptr),Y
+    STA obj_sd_length
+    JSR advance_byte
+    LDA stream_ptr+1
+    STA obj_sd_addr+1
+    STA obj_ld_addr+1
+    LDA stream_ptr
+    STA obj_sd_addr
+    CLC
+    ADC obj_sd_length
+    STA obj_ld_addr
+    BCC _obj_ld_addr_nc
+    INC obj_ld_addr+1
+._obj_ld_addr_nc
+    RTS
+
+\  INITIALISE STREAM POINTER TO DATA FOR OBJECT IN ACCUMULATOR
+
+.select_obj2
+    ASL A
+    TAX
+    LDA obj_table,X
+    STA stream_ptr
+    LDA obj_table+1,X
+    STA stream_ptr+1
+    LDA #0
+    STA stream_bit
+    RTS
+
+\  UPDATE A STATEFUL OBJECT ACCORDING TO ITS STATE
+\  READS APPROPRIATE GAME STATE REGISTER, AND MAYBE UNPACKS A
+\  SURROGATE OBJECT'S DESCRIPTIONS AND EXAMINE MESSAGE
+
+.real_update_obj_state
+    LDA cur_obj
+    STA orig_obj
+    LDA obj_st
+    BEQ _uos_stateless
+    CMP #2
+    BCC _uos_bistate
+
+\  MULTIPLE STATES; obj_st_src SPECIFIES A STATUS BYTE WHICH GIVES
+\  THE SURROGATE OBJECT, IF ANY
+
+._uos_polystate
+    LDX obj_st_src      \  get relevant state byte
+    LDA state_bytes, X
+    BEQ _uos_stateless  \  do nothing if it is zero
+    JMP select_obj1
+
+\  TWO STATES; THE STATUS BIT CORRESPONDING TO THE OBJECT'S ID SAYS
+\  WHETHER OR NOT TO USE THE NEXT OBJECT AS A SURROGATE
+
+._uos_bistate
+    LDA orig_obj
+    JSR real_get_state_bit
+    BEQ _uos_stateless
+    LDX orig_obj        \  get original object ID
+    INX                 \  increase it
+    TXA
+    JMP select_obj1
+    
+\  STATELESS  (OR IN DEFAULT STATE)
+
+._uos_stateless
+    RTS
+
+
+\  RESET THE POSITION ON THE TREE / BITS READ
+\  ALSO MAKE SURE Y=0 FOR THE BIT STREAM EXTRACTION
+
+.real_reset_tree_pos
+.reset_bits_read
+    LDY #0  \ will be useful later
+    STY tree_pos
+    RTS
+
+\  EXTRACT BITS FROM THE STREAM AND ROLL LEFT INTO THE
+\  DESTINATION BYTE
+
+.copy_4_bits
+    JSR copy_2_bits
+.copy_2_bits
+    JSR real_copy_one_bit
+    
+\  EXTRACT A SINGLE BIT FROM THE STREAM AND ROLL LEFT
+\  INTO THE DESTINATION BYTE
+
+.real_copy_one_bit
+    JSR real_get_one_bit
+    BEQ _copy_zero
+._copy_one
+    SEC
+    ROL tree_pos
+    RTS
+._copy_zero
+    ASL tree_pos
+    RTS
+
+\  EXTRACT A SINGLE BIT FROM THE COMPRESSED STREAM
+\  THIS IS USED BOTH IN DESCENDING TREE AND COPYING BITS
+\  ON ENTRY;  EXPECTS Y=0
+\             UPDATES [stream_ptr] AND [stream_bit]
+\  ON RETURN; X=[tree_pos] FOR DESCENDING TREE
+\             Z=1 IF BIT IS ZERO
+\  WE NEED TO SET X FIRST BECAUSE Z IS SO FRAGILE.
+
+.real_get_one_bit
+    LDA (stream_ptr),Y
+    LDX stream_bit
+    AND bits_LR,X
+    PHP \ save the zero flag
+    INX
+    STX stream_bit
+    CPX #8
+    BCC _getbit1
+    LDX #0
+    STX stream_bit
+    INC stream_ptr
+    BNE _getbit1
+    INC stream_ptr+1
+._getbit1
+    LDX tree_pos \ current position on tree
+    PLP \ restore the saved zero flag
+    RTS
+
+\  ADVANCE TO FIRST BIT OF NEXT BYTE IN STREAM
+
+.advance_byte
+    LDX #0
+    STX stream_bit
+    INC stream_ptr
+    BNE _advbyte1
+    INC stream_ptr+1
+._advbyte1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+.newnewl
+    LDX wbuf_ptr        \  See if there is anything in buffer .....
+    BEQ newnewl1
+    JSR _nwc_dump_buf
+.newnewl1
+    LDA #0
+    STA scr_width
+    STA wbuf_ptr
+    JMP osnewl
+
+\  DISPLAY A CHARACTER, BUT DO NOT ALLOW A WORD TO GO OVER THE END OF
+\  A LINE ONTO THE NEXT LINE.
+
+.newwrch
+    PHP
+    STA tempA
+    TYA
+    PHA
+    TXA
+    PHA    
+    LDA tempA
+    CMP #33
+    BCC _nwc_is_eow
+._nwc_printable
+    LDX wbuf_ptr
+    STA wordbuf,X
+    INX
+    STX wbuf_ptr
+    CPX #LWIDTH
+    BCS _nwc_buffer_full
+    BCC restore
+\  If the word buffer is full, there is by definition no way we can fit
+\  it all onto one line; so just dump it out as-is.
+._nwc_buffer_full
+    JSR _nwc_dump_buf
+    LDX #0
+    STX wbuf_ptr
+ .restore
+    PLA
+    TAX
+    PLA
+    TAY
+    LDA tempA
+    PLP
+    RTS
+
+._nwc_dump_buf           \  Dump out word buffer
+    LDX #0
+._dwb1
+    LDA wordbuf,X
+    JSR osasci
+    INX
+    CPX wbuf_ptr
+    BCC _dwb1
+    RTS
+
+._nwc_is_eow            \  END OF WORD
+    LDX wbuf_ptr        \  See if buffer is empty .....
+    BEQ _nwc_dumped     \  ..... if so, don't try to dump it
+._nwc_not_empty
+    \  See if the word will fit on the screen
+    CLC
+    LDA scr_width
+    ADC wbuf_ptr
+    CMP #LWIDTH
+    BEQ _nwc_just_fits  \  fits, but no room for space
+    BCC _nwc_fits    
+    \  start a new line for the word
+    JSR osnewl
+    LDA #0
+    STA scr_width		\  back to beginning of line
+._nwc_fits
+    JSR _nwc_dump_buf
+._nwc_dumped
+    LDA tempA
+    BEQ _nwc_not_eol    \  CHR$(0) is non-spacing word break
+    CMP #13
+    BEQ _nwc_is_CR
+    \  treat as space
+    LDA wbuf_ptr
+    SEC                 \  to account for the space
+    ADC scr_width
+    STA scr_width
+    CMP #LWIDTH         \  see if we have hit end of line
+    BCC _nwc_not_eol
+    LDA #0              \  set line position to beginning
+    STA scr_width
+._nwc_not_eol
+    LDA #0
+    STA wbuf_ptr
+    LDA tempA
+    JSR osasci
+    JMP restore
+._nwc_just_fits
+    JSR _nwc_dump_buf   \  taking us to end of line
+    BCS _nwc_start_line \  we know C=1 here
+._nwc_is_CR
+    JSR osnewl
+._nwc_start_line
+    LDA #0
+    STA scr_width
+    STA wbuf_ptr
+    BEQ restore
+
+\  DISPLAY UNCOMPRESSED INLINE TEXT
+
+.say
+	PLA
+	STA stream_ptr
+	PLA
+	STA stream_ptr+1
+	LDY#1
+._say1
+	LDA (stream_ptr),Y
+	BEQ _say2
+	JSR newwrch
+	INY
+	BNE _say1
+	BRK
+._say2
+	CLC
+	TYA
+	ADC stream_ptr
+	STA stream_ptr
+	LDA stream_ptr+1
+	ADC #0
+	PHA
+	LDA stream_ptr
+	PHA
+	RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\  TABLE OF BIT VALUES, IN ORDER LEFT TO RIGHT
+.bits_LR
+    EQUB &80
+    EQUB &40
+    EQUB &20
+    EQUB &10
+    EQUB &08
+    EQUB &04
+    EQUB &02
+    EQUB &01
+
+ALIGN &100
+
+.cur_room
+    EQUB 0
+.light
+    EQUB 0
+.exits
+    EQUD 0:EQUD 0:EQUD 0
+.room_desc_addr
+    EQUW 0
+.next_rm
+    EQUB 0
+.next_lt
+    EQUB 0
+.prev_rm
+    EQUB 0
+
+.cur_obj
+    EQUB 0
+.obj_carry
+    EQUB 0
+.obj_st
+    EQUB 0
+.obj_st_src
+    EQUB 0
+.obj_exam
+    EQUB 0
+.obj_exam_msg
+    EQUB 0
+.obj_sd_length
+    EQUB 0
+.obj_sd_addr
+    EQUW 0
+.obj_ld_addr
+    EQUW 0
+.orig_obj
+    EQUB 0
+
+    
+ALIGN &100
+
+._code_end
+
+\  ORG IS EQUIVALENT TO SETTING P%, ON A REAL BEEB
+
+ORG game_data
+
+\  Mistake on my part:
+\
+\  Verbs need to have higher numbers than nouns, so nouns can map
+\  directly to objects wherever possible.
+
+\  THE VOCABULARY SECTIONS PROBABLY WILL NEED MOVING INTO THE
+\  GAME DATA IN DUE COURSE.
+
+.verb_list
+\  BUILT-IN VERBS; DIRECTIONS
+    EQUB &81: EQUS "NORTH"
+    EQUB &83: EQUS "EAST"
+    EQUB &85: EQUS "SOUTH"
+    EQUB &87: EQUS "WEST"
+    EQUB &82: EQUS "NE"
+    EQUB &82: EQUS "NORTHEAST"
+    EQUB &84: EQUS "SE"
+    EQUB &84: EQUS "SOUTHEAST"
+    EQUB &86: EQUS "SW"
+    EQUB &86: EQUS "SOUTHWEST"
+    EQUB &88: EQUS "NW"
+    EQUB &88: EQUS "NORTHWEST"
+    EQUB &89: EQUS "UP"
+    EQUB &89: EQUS "CLIMB"
+    EQUB &8A: EQUS "DOWN"
+    EQUB &8A: EQUS "DESCEND"
+    EQUB &8B: EQUS "BACK"
+\  BUILT-IN VERBS; OTHER
+    EQUB &8C: EQUS "LOOK"
+    EQUB &8D: EQUS "EXAMINE"
+    EQUB &8D: EQUS "READ"
+    EQUB &8E: EQUS "TAKE"
+    EQUB &8E: EQUS "GET"
+    EQUB &8E: EQUS "PICKUP"
+    EQUB &8F: EQUS "DROP"
+    EQUB &8F: EQUS "PUTDOWN"
+    EQUB &8F: EQUS "LEAVE"
+    EQUB &90: EQUS "INVENTORY"
+    EQUB &90: EQUS "CARRYING"
+    EQUB &90: EQUS "LIST"
+\  BUILT-IN VERBS; NOISE WORDS
+    EQUB &80: EQUS "GO"
+    EQUB &80: EQUS "WALK"
+    EQUB &80: EQUS "SAY"
+    
+\  EXTENDED VERBS
+    EQUB &91: EQUS "OPEN"
+    EQUB &91: EQUS "UNFOLD"
+    EQUB &91: EQUS "DEPLOY"
+    EQUB &92: EQUS "FOLD"
+    EQUB &92: EQUS "CLOSE"
+    EQUB &93: EQUS "SEARCH"
+    EQUB &94: EQUS "SHAKE"
+    EQUB &95: EQUS "BEND"
+    EQUB &95: EQUS "SNAP"
+    EQUB &96: EQUS "BAKE"
+    EQUB &97: EQUS "INSERT"
+    EQUB &97: EQUS "USE"
+    EQUB &98: EQUS "CLUE"
+    EQUB &98: EQUS "HELP"
+
+    BRK
+._verb_list_end
+
+\  NOUN LIST IN REAL LIFE WILL BE PART OF GAME DATA
+
+.noun_list
+    EQUB &81: EQUS "UMBRELLA"
+    EQUB &81: EQUS "BROLLY"
+    EQUB &83: EQUS "BIRDSEED"
+    EQUB &83: EQUS "SEED"
+    EQUB &83: EQUS "BAG"
+    EQUB &84: EQUS "MIX"
+    EQUB &84: EQUS "CAKE"
+    EQUB &85: EQUS "CUPBOARD"
+    EQUB &86: EQUS "METER"
+    EQUB &87: EQUS "EGG"
+    EQUS &88: EQUS "SOFA"
+    EQUB &89: EQUS "TUBE"
+    EQUB &89: EQUS "GLOWSTICK"
+    EQUB &8B: EQUS "HEN"
+    EQUB &8B: EQUS "CHICKEN"    
+    EQUB &8D: EQUS "TINS"
+    EQUB &8D: EQUS "PANS"
+    EQUB &8E: EQUS "COIN"
+
+    BRK
+._noun_list_end
+
+INCLUDE "birthday_data.6502"
+
+SAVE "M.ABENGIN", _code_begin, _code_end, _rts
+SAVE "D.BIRTHDY", game_data, _game_data_end
+
+PRINT "Code length =", ~_code_end-_code_begin
+PRINT "Data length =",~_game_data_end - game_data
+PRINT ""
+PRINT "loc =",~object_loc
+PRINT "light =",~light
+PRINT "next_lt =",~next_lt
+PRINT ""
+PRINT "newwrch =", ~newwrch
+PRINT "newnewl =", ~newnewl
+
+\\  DEDICATED TO THE PUBLIC DOMAIN 2021 BY JULIE KIRSTY LOUISE MONTOYA
+\\  <bluerizlagirl@gmail.com>  NO RIGHTS RESERVED
+\\
+\\  USE IT - ABUSE IT - ENJOY IT - DESTROY IT - STUDY IT - SHARE IT - ADAPT IT
+\\

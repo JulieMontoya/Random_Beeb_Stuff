@@ -1,0 +1,507 @@
+#!/usr/bin/perl -w
+#!/opt/local/bin/perl -w
+use strict;
+use constant { TRUE => "1", FALSE => "" };
+use DBI;
+use Data::Dumper;
+use Getopt::Std;
+
+my $DB_NAME = "advtest1";
+my $DB_HOST = "localhost";
+my $DB_USER = "julie";
+my $DB_PASS = "clamdigger";
+
+my %OPTIONS;
+getopts "o:p:q:", \%OPTIONS;
+
+my $ROOM_PREFIX = $OPTIONS{"p"} || "room";
+my $OUTPUT_FILE = $OPTIONS{"o"};
+
+my ($offset, $dest, $byte, $char, $chars, $direction, @directions, $description);
+my ($asm, $cmt, $rooms_data, $tree, $rooms_table, $light, $msg_table, $msg_id,
+    $message, $msg_data);
+my ($obj_table, $obj_data, $init_table, $obj_id, $start_room, $can_carry,
+    $states, $state_byte, $desc_carried, $desc_in_room, $exam_msg,
+    $carried_data, $in_room_data);
+    
+my @offset = qw/ 0000 0001 0010 0011 0100 0101 0110 0111
+                 1000 1001 1010 1011 1100 1101 1110 1111 /;
+#  NB: Perl treats $offset[-1] as last element of @offset
+
+my @exits = ( 2, 0, 0, 0, 3, 0, 0, 0, 0, 0);
+
+my $bits = "";
+
+my $cur_room = 1;
+
+my ($dbh, $query, $sth, $count, $query2, $sth2, @record, $i, $success);
+
+if ($_ = $OPTIONS{"q"}) {
+    $DB_NAME = $_;
+    $dbh = DBI->connect("DBI:SQLite:database=${DB_NAME}.sqlite3",
+                        "","");
+}
+else {
+    $dbh = DBI->connect("DBI:mysql:database=$DB_NAME;host=$DB_HOST",
+                        "$DB_USER","$DB_PASS");
+};
+
+my ($node, $left_child, $left_is_payload, $right_child, $right_is_payload,
+    $left_char, $right_char);
+
+
+my $get_room = "SELECT description FROM rooms WHERE id=?";
+my $sth_get_room = $dbh->prepare($get_room);
+
+my $get_messages = "SELECT id,message FROM messages ORDER BY id";
+my $sth_get_messages = $dbh->prepare($get_messages);
+
+my $get_sysmsgs = "SELECT id,message FROM system_messages ORDER BY id";
+my $sth_get_sysmsgs = $dbh->prepare($get_sysmsgs);
+
+my $get_rooms = "SELECT id,light FROM rooms ORDER BY id";
+my $sth_get_rooms = $dbh->prepare($get_rooms);
+
+my $get_exits = "SELECT direction,dest FROM exits WHERE room=?";
+my $sth_get_exits = $dbh->prepare($get_exits);
+
+my $get_encode_tree = "SELECT ichar,bits FROM encoding_tree";
+my $sth_get_encode_tree = $dbh->prepare($get_encode_tree);
+
+my $get_decode_tree = "SELECT node,left_child,left_is_payload,right_child,"
+                    . "right_is_payload FROM decoding_tree ORDER BY node";
+my $sth_get_decode_tree = $dbh->prepare($get_decode_tree);
+
+my $count_objects = "SELECT COUNT(*) FROM objects";
+my $sth_count_objects = $dbh->prepare($count_objects);
+
+my $get_objects = "SELECT id,start_room,can_carry,states,state_byte,"
+                . "desc_carried,desc_in_room,exam_msg FROM objects "
+                . "ORDER BY id";
+my $sth_get_objects = $dbh->prepare($get_objects);
+
+my (%path_to_char, $data);
+
+#########################  BEGIN FUNCTION DEFINITIONS  #########################
+
+sub make_equb {
+    my $data = shift;
+    my $output = "";
+    my $max_width = shift || 80;
+    my $indent = shift // 4;
+    my $sep = "";
+    my $line_so_far = " " x $indent;    
+    my ($head, $leftover, $equ, $width_so_far, $avail);
+    
+    while (length $data) {
+        $head = unpack "C", substr $data, 0, 1;
+        $data = substr $data, 1;
+        #printf "Data begins with %d = &%02X\n", $head, $head;
+        #$output .= $sep . sprintf "EQUB &%02X", $head;
+        #$sep = ":";
+        $equ = sprintf "EQUB &%02X", $head;
+        if (length "$line_so_far$sep$equ" > $max_width) {
+            $output .= "$line_so_far\n";
+            $line_so_far = " " x $indent . $equ;
+        }
+        else {
+            $line_so_far .= "$sep$equ";
+        };
+        $sep = ":";
+    };
+    $output .= "$line_so_far\n";
+};
+
+sub printable {
+    $_ = shift;
+    return "" unless defined $_;
+    if (/[^!#-%'-~]/) {
+        return sprintf "&%02X", unpack "C", $_;
+    }
+    else {
+        return $_;
+    };
+};
+
+sub compress {
+    my $text = shift;
+    # warn "Compressing '$text'";
+    my $bits = "";
+    my $chars = "";
+    my $path;
+    my $ascii;
+    my $char;
+    my ($printable, $byte, $i);
+    foreach $char (split //, $text) {
+        $ascii = unpack "C", $char;
+        $path = $path_to_char{$ascii};
+        unless (defined $path) {
+            warn sprintf "No node on tree for '%s'", $char;
+        };
+        $bits .= $path;
+        #print "$path ";
+    };
+    #print "\n";
+    
+    #printf "Stream of bits is '%s'\n", $bits;
+    #printf "Length of stream is %d\n", length $bits;
+    
+    for ($i = 0; $i <= length $bits; $i += 8) {
+        $byte = substr "${bits}0000000", $i, 8;
+        #print "$byte ";
+        $char = pack "B8", $byte;
+        #printf "&%02X ", unpack "C", $char;
+        $chars .= pack "B8", $byte;
+    };
+    #print "\n---- ends ----\n";
+
+    $chars;
+};
+
+##########################  END FUNCTION DEFINITIONS  ##########################
+
+############################  GET DIRECTION  VERBS  ############################
+
+$query = "SELECT verb,vn FROM verbs WHERE (LENGTH(verb)>2 OR vn>8) AND vn<11 "
+       . "ORDER BY vn";
+$sth = $dbh->prepare($query);
+
+$sth->execute;
+while (($direction, $i) = $sth->fetchrow_array) {
+    $directions[$i] = $direction;
+};
+$sth->finish;
+
+#############################  GET  ENCODING TREE  #############################
+
+$sth_get_encode_tree->execute;
+while (($char, $bits) = $sth_get_encode_tree->fetchrow_array) {
+    $path_to_char{$char} = $bits;
+};
+$sth_get_encode_tree->finish;
+
+#############################  GET  DECODING TREE  #############################
+
+print ".tree\n";
+$tree = ".tree\n";
+
+$sth_get_decode_tree->execute;
+while (($node, $left_child, $left_is_payload, $right_child, $right_is_payload)
+        = $sth_get_decode_tree->fetchrow_array) {
+    $asm = "    ";
+    $cmt = sprintf "#%-3d ", $node;
+    if ($left_is_payload) {
+        $left_char = 1 + 2 * $left_child;
+        $cmt .= sprintf "LEFT %-4s", printable pack "C", $left_child;
+        #  replace \n with Beeb-ish \r
+        $left_char = 27 if $left_char == 21;
+    }
+    else {
+        $left_char = 2 * $left_child;
+        $cmt .= sprintf "LEFT #%-3d", $left_child;
+    };
+    $asm .= sprintf "EQUB &%02X", $left_char;
+
+    if ($right_is_payload) {
+        $right_char = 1 + 2 * $right_child;
+        $cmt .= sprintf " RIGHT %-4s", printable pack "C", $right_child;
+        #  replace \n with Beeb-ish \r
+        $right_char = 27 if $right_char == 21;
+    }
+    else {
+        $right_char = 2 * $right_child;
+        $cmt .= sprintf " RIGHT #%-3d", $right_child;
+    };
+    $asm .= sprintf ":EQUB &%02X", $right_char;
+    
+    #  Beebify the human-readable comment, too
+    $cmt =~ s/&0A/\&0D/g;
+    
+    $asm .= "  \\  $cmt\n";
+
+    print "$asm";
+    $tree .= $asm;
+};
+$sth_get_decode_tree->finish;
+print "._tree_end\n";
+$tree .= "._tree_end\n";
+
+# exit;
+
+#################################  GET  ROOMS  #################################
+
+#  Bodge for no room 0
+
+$rooms_table = ".room_table\n";
+$rooms_table .= sprintf "    EQUW %s1\n", $ROOM_PREFIX;
+
+$sth_get_rooms->execute;
+while (($cur_room, $light) = $sth_get_rooms->fetchrow_array) {
+    $bits = "";
+    $chars = "";
+    @exits = ();
+    
+    $sth_get_exits->execute($cur_room);
+    while (($direction, $dest) = $sth_get_exits->fetchrow_array) {
+        $exits[$direction] = $dest;
+    };
+
+    # print Dumper \@exits;
+
+    printf "Room #%d ", $cur_room;
+    for ($direction = 1; $direction <= 10; ++$direction) {
+        if ($exits[$direction]) {
+            printf "%s => %d ", $directions[$direction], $exits[$direction];
+        };
+    };
+    print "\n";
+
+    #  LIGHT STATUS
+
+    $bits .= $light ? "1 " : "0 ";
+
+    #  EXITS
+
+    for ($direction = 1; $direction <= 10; ++$direction) {
+        $dest = $exits[$direction] || 0;
+        $offset = $dest - $cur_room;
+        if ($dest == 0) {           #  0 means no exit
+            $bits .= "0 ";
+        }
+        elsif (abs $offset < 8) {   #  10 followed by offset
+            $bits .= "10" . $offset[$offset] . " ";
+        }
+        else {                      #  11 followed by destination
+            $bits .= "11" . unpack("B8", pack "C", $dest) . " ";
+        };
+    };
+
+    print "$bits\n";
+
+    $bits =~ s/\s//g;
+
+    # print "$bits\n";
+
+    for ($i = 0; $i < length $bits; $i += 8) {
+        $byte = substr "${bits}0000000", $i, 8;
+        $char = pack "B8", $byte;
+        printf "%s = &%02X ", $byte, unpack "C", $char;
+        
+        $chars .= $char;
+    };
+
+    print "\n";
+
+    $asm = make_equb $chars;
+    printf ".%s%d\n", $ROOM_PREFIX, $cur_room;
+    print "$asm\n";
+
+    $rooms_table .= sprintf "    EQUW %s%d\n", $ROOM_PREFIX, $cur_room;
+    
+    $rooms_data .= sprintf ".%s%d\n", $ROOM_PREFIX, $cur_room;
+    $rooms_data .= $asm;
+    
+    #  DESCRIPTION
+    
+    $sth_get_room->execute($cur_room);
+    ($description) = $sth_get_room->fetchrow_array;
+    $sth_get_room->finish;
+    
+    print "$description\n";
+    
+    printf ".ldesc%d\n", $cur_room;
+    $rooms_data .= sprintf ".ldesc%d\n", $cur_room;
+
+    $data = compress "$description\n";
+    # ++$i;
+    $asm = make_equb $data;
+
+    print $asm;
+    $rooms_data .= $asm;
+};
+
+$sth_get_rooms->finish;
+
+$rooms_data .= "._rooms_end\n";
+$rooms_table .= "._room_table_end\n";
+
+print "\n";
+print $rooms_data;
+
+################################  GET MESSAGES  ################################
+
+$msg_table .= ".msg_table\n";
+
+$sth_get_messages->execute;
+while (($msg_id, $message) = $sth_get_messages->fetchrow_array) {
+    $msg_table .= sprintf "    EQUW msg%d\n", $msg_id;
+
+    printf ".msg%d\n", $msg_id;
+    $msg_data .= sprintf ".msg%d\n", $msg_id;
+
+    $data = compress "$message\n";
+    $asm = make_equb $data;
+    
+    print $asm;
+    $msg_data .= $asm;
+};
+$sth_get_messages->finish;
+
+$msg_data .= "._messages_end\n";
+$msg_table .= ".smsg_table\n";
+
+$sth_get_sysmsgs->execute;
+while (($msg_id, $message) = $sth_get_sysmsgs->fetchrow_array) {
+    $msg_table .= sprintf "    EQUW smsg%d\n", $msg_id;
+
+    printf ".smsg%d\n", $msg_id;
+    $msg_data .= sprintf ".smsg%d\n", $msg_id;
+
+    $data = compress "$message\n";
+    $asm = make_equb $data;
+    
+    print $asm;
+    $msg_data .= $asm;
+};
+$sth_get_sysmsgs->finish;
+
+$msg_data .= "._sysmssgs_end\n";
+$msg_table .= "._msg_table_end\n";
+
+################################  GET  OBJECTS  ################################
+
+print "\n\n";
+
+$sth_count_objects->execute;
+($count) = $sth_count_objects->fetchrow_array;
+$sth_count_objects->finish;
+
+print ".obj_table\n";
+$obj_table = ".obj_table\n    EQUW obj1\n";
+$init_table = sprintf ".init_loc\n    EQUB %-3d  \\ number of objects+1\n", $count + 1;
+
+$sth_get_objects->execute;
+while (($obj_id, $start_room, $can_carry, $states, $state_byte, $desc_carried,
+       $desc_in_room, $exam_msg) = $sth_get_objects->fetchrow_array) {
+
+    $obj_table .= sprintf "    EQUW obj%d\n", $obj_id;
+    $init_table .= sprintf "    EQUB %-3d  \\  object #%d starts in room %d\n",
+        $start_room, $obj_id, $start_room;
+    
+    #  "CARRIED" VERSION OF DESCRIPTION, FOLLOWED BY CHR$(&00)
+    
+    $carried_data = compress "$desc_carried\x00";
+    
+    #  IN-ROOM VERSION OF DESCRIPTION, FOLLOWED BY NEWLINE
+    
+    $in_room_data = compress "$desc_in_room\n";
+    
+    $bits = "";
+    $chars = "";
+    
+    #  CARRYABLE
+    
+    if ($can_carry) {
+        $bits .= "1 ";
+    }
+    else {
+        $bits .= "0 ";
+    };
+    
+    #  STATES
+    
+    if ($states == 0) {
+        $bits .= "0 ";
+    }
+    elsif ($states == 1) {
+        $bits .= "10 ";
+    }
+    else {
+        $bits .= "11" . sprintf ("%06b", ($state_byte & 63)) . " ";
+    };
+    
+    #  EXAMINE MESSAGE
+    
+    if ($exam_msg == 0) {
+        $bits .= "0 ";
+    }
+    elsif ($exam_msg < 0) {
+        $bits .= "10 ";
+    }
+    else {
+        $bits .= "11" . sprintf ("%06b", ($exam_msg & 63)) . " ";
+    };
+
+    print "$bits\n";
+
+    $bits =~ s/\s//g;
+
+    # print "$bits\n";
+    
+    for ($i = 0; $i < length $bits; $i += 8) {
+        $byte = substr "${bits}0000000", $i, 8;
+        $char = pack "B8", $byte;
+        printf "%s = &%02X ", $byte, unpack "C", $char;
+        
+        $chars .= $char;
+    };
+
+    print "\n";
+    
+    $asm = make_equb $chars;
+    $asm .= sprintf "    EQUB obj%sl-obj%ss\n", $obj_id, $obj_id;
+    printf ".obj%d\n", $obj_id;
+    $obj_data .= sprintf ".obj%d\n", $obj_id;
+    print $asm;
+    $obj_data .= $asm;
+
+    $asm = make_equb $carried_data;
+    printf ".obj%ds\n", $obj_id;
+    $obj_data .= sprintf ".obj%ds\n", $obj_id;
+    print $asm;
+    $obj_data .= $asm;
+
+    $asm = make_equb $in_room_data;
+    printf ".obj%dl\n", $obj_id;
+    $obj_data .= sprintf ".obj%dl\n", $obj_id;
+    print $asm;
+    $obj_data .= $asm;
+
+};
+$sth_get_objects->finish;
+
+# print "\n\n\n";
+# 
+# print $obj_table;
+# 
+# print "\n";
+# 
+# print $obj_data;
+
+
+
+if ($OUTPUT_FILE) {
+    open FH, ">", $OUTPUT_FILE or die "Could not open $OUTPUT_FILE: $!";
+    print FH $msg_table;
+    print FH "\n";
+    print FH $msg_data;
+    print FH "\n";
+    print FH $rooms_table;
+    print FH "\n";
+    print FH $rooms_data;
+    print FH "\n";
+    print FH $obj_table;
+    print FH "\n";
+    print FH $obj_data;
+    print FH "\n";
+    print FH $init_table;
+    print FH "\n";
+    print FH $tree;
+    print FH "\n";
+    print FH "._game_data_end\n";
+    close FH;
+};
+
+$dbh->disconnect;
+
+exit;
