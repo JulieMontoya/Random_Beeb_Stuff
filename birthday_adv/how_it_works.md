@@ -29,5 +29,33 @@ reading just the first byte of the record, and using `BMI` or `BPL` to jump to c
 
 ## The Objects Table
 
+Each record in the objects table contains "carryability" (1 => object can be picked up and carried; 0 => object cannot be carried), "statefulness", possibly
+"state register", "examinability", possibly "examine message", descripton as displayed when carried and description as displayed when seen in a room.
+
+The first (leftmost) bit of an object's record indicates its carryability.  This allows it to be determined quickly without unpacking in full.
+
+Type      | Bits
+----------|--------------------------
+Stateless | 0
+Bi-state  | 10
+Polystate | 11 + 6 bit state register
+
+For a bi-state object, if the game state bit flag with the same number as the object is 1, then the examine message and description text from the next object in
+the table are used as a surrogate whenever this object is called for.  That object need never be referred to explicitly.  The umbrella in _Birthday Adventure_ is
+an example of a bi-state object.  Object 1 is the umbella in its folded state; object 2 is the umbrella in its open state.  It is always referred to as object 1
+by the game engine, although if state bit 1 is set then it will be described as though it were object 2.
+
+For a polystate object, a byte register within in the game state area is used to indicate any surrogate object.  (If this byte contains 0, then the object's own description will be used, not the non-existent object 0.)
+
+The message displayed by the built-in `EXAMINE` command is indicated as follows:
+
+Type                  | Bits
+----------------------|---------------------------
+Nothing special       | 0
+Same-numbered message | 10
+Any numbered message  | 11 + 6-bit message number
+
+At the next byte boundary is a single byte indicating the length of the compressed stream for the object's short description; then the compressed short description; and finally, on the next byte boundary, the compressed long description.
+
 
 
