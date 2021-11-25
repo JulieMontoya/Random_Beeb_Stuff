@@ -2,6 +2,49 @@
 
 Very much a work in progress .....
 
+Requirements:
+
++ Complete enough to implement typical business logic for an adventure.
++ Should be obvious to anyone familiar with BASIC on the BBC Micro.
++ But not a slavish reimplementation, if there is a better way.
++ And not too fancy; there is always still BASIC if really needed.
++ Generate bare-metal 6502 code  (no intermediate step).
+
+# THE LANGUAGE
+
+Influenced by BBC BASIC  (Boolean expressions should be similar enough to be
+transliterated almost directly)  and 6502 assembler  (not surprising, as this
+is the final target).
+
+The major improvement over BBC BASIC is the ability to use nested, multi-line
+IF statements, as illustrated in the following example:
+
+```
+IF VERB GE 1 AND VERB LT 12 AND (DEST IS 2 OR _ IS 4 OR _ IS 9 OR _ IS 11) THEN
+    IF knocked THEN
+        IF UNVISITED DEST THEN
+            MESSAGE 56
+            NEWLINE
+        FI
+    ELSE
+        MESSAGE 68
+        ROOM := EXIT 11
+        SHOW_DESC := 1
+    FI
+FI
+```
+
+This is the "door knocked" logic from _Bobajob Street_.  We are checking for
+a direction verb and the destination room to be 2, 4, 9 or 11  (the houses).
+If the game state indicates that the player has previously tried knocking on
+a door and received no answer, and the destination room has not been
+visited before, they are told that the door is not locked and they enter.
+(Nothing happens if the player has already been inside the house and thus
+can be expected to remember the door is unlocked.)  But if the player has
+_not_ yet knocked on a door, a message is displayed, the player is returned
+whence they came and the flag is set to force the room description to be
+displayed.
+
 ## IF STATEMENT
 
 The IF statement has the following syntax:
@@ -17,8 +60,8 @@ ELSE and FI are executed.  In any case, execution proceeds after FI.
 Boolean expressions can use AND, OR and NOT.  NOT has the highest priority.
 AND has a higher priority than OR.
 
-Boolean expressions can use AND, OR and NOT.  NOT has the highest priority.
-AND has a higher priority than OR.
+Boolean expressions can use AND and OR.  There is no NOT, but every test has
+an opposite-sense form anyway.  AND has a higher priority than OR.
 
 A list of terms separated by OR is evaluated only as far as the first TRUE
 test  (at which point we know the answer is TRUE).  A list of terms separated
@@ -74,21 +117,6 @@ UNVISITED 12    \  TRUE if room 12 has not yet been visited
 BITSET 6        \  TRUE if B6 is set
 BITUNSET C4     \  TRUE if the status bit pointed to by C4 is unset
 ```
-
-### VISITED : Room has been visited
-
-```
-VISITED DEST    \  TRUE if destination room has been visited
-```
-
-### UNVISITED : Room has not been visited
-
-```
-UNVISITED 12    \  TRUE if room 12 has not yet been visited
-```
-
-
-###
 
 ## DYADIC RELATIONS
 
@@ -148,7 +176,19 @@ LOC glowstick   \ returns location of the glowstick
 
 ### B0 - B255
 
-Short form of `BITSET 0 .. BITSET 255`.  
+Short form of `BITSET 0 .. BITSET 255`.
+
+### V1 - V255
+
+Short form of `VISITED 1 .. VISITED 255`.
+
+### C0 - C63
+
+Short form of `CREG 0 .. CREG 63`.
+
+### L1 - L127
+
+Short form of `LOC 1 .. LOC 127`.
 
 ### UNDERSCORE
 
@@ -159,6 +199,10 @@ IF ROOM IS 7 OR _ IS 8 OR _ IS 10 THEN
     MESSAGE 17
 FI
 ```
+
+This simply adds another `CMP` instruction to an AND / OR chain without
+reloading the accumulator between successive comparisons.  Three bytes of
+memory and four ticks of the clock in the hand 
 
 Be very careful with _ elsewhere!
 
@@ -191,7 +235,9 @@ FI
 DONE
 ```
 
-Return to BASIC.
+Return directly to BASIC without executing any more code.  An implied DONE
+is automatically appended to a program.
+
 
 ### ERROR
 ```
@@ -214,13 +260,6 @@ and return to BASIC.
 
 # CONCEPTS
 
-Requirements:
-
-+ Complete enough to implement typical business logic for an adventure.
-+ Should be obvious to anyone familiar with BASIC on the BBC Micro.
-+ But not a slavish reimplementation, if there is a better way.
-+ Generate bare-metal 6502 code  (no intermediate step).
-
 
 ## SYMBOLIC CONSTANTS
 
@@ -229,7 +268,29 @@ instance, if the symbol `umbrella_open` refers to the game status bit B1, it
 will be interpreted when it appears in Boolean context as the present state of
 B1.  However, in a Numeric context, it will be interpreted as the value 1.
 
+Symbolic constants for status bits have an automatic inverse form specified
+by including **un** in the name.  For instance, if **B8** is represented by
+the symbol `gum_chewed`, then any time the symbol `gum_unchewed` is seen, it
+will be read as `NOT gum_chewed`.
 
+## OPERATION LISTS
+
+An AND list consists of a series of Boolean tests, **all** of which must be
+TRUE for the list to succeed.  Tests are performed in turn and as soon as the
+first one returns FALSE, the program jumps to the list's FALSE address; or
+if all tests returned TRUE, execution continues from the end of the list.
+
+An OR list consists of a series of Boolean tests, **any** of which can be
+TRUE for the list to succeed.  Tests are performed in turn and as soon as the
+first one returns TRUE, the program jumps to the list's TRUE address; or
+if all tests returned FALSE, execution continues from the end of the list.
+
+
+
+
+# THE OUTPUT CODE
+
+The output will be in the form of a BeebAsm source code file.
 
 
 
