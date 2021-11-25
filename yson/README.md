@@ -51,8 +51,85 @@ The IF statement has the following syntax:
 
 IF boolean_expression [ THEN statements ] [ ELSE statements ] FI
 
-The expression is evaluated.  If it is TRUE then the statements between THEN
-and ELSE are executed.  If the expression is FALSE then the statements between
+The syntax of the IF statement in BBC BASIC is extended to support multi-line
+statements with proper nesting.  To mark the end of an IF statement, therefore,
+a new keyword FI is required.  Another added keyword is ELIF, which allows
+one IF to be executed if another IF tests false without increasing the nesting
+level.
+
+```
+IF ROOM IS RM_STUDY AND bookcase_moved THEN
+    NORTH := RM_PASSAGE
+FI
+```
+
+In its simplest form, the IF statement looks like this:
+
+```
+IF test THEN statement FI
+```
+
+Then the statement will be executed if the test is TRUE.  It is also
+possible to have multiple conditional statements like this:
+
+```
+IF test THEN
+    statement
+    another statement
+    and so on
+FI
+```
+
+An ELSE clause may be added between THEN and FI, providing a list of
+statements which are to be executed if the test is FALSE:
+
+```
+IF test THEN
+    statement
+    another statement
+ELSE
+    different statement
+    more statements
+FI
+```
+
+Note that every IF requires its own FI.  To avoid this sort of ugliness when
+chaining one IF statement onto the ELSE clause of another:
+
+```
+IF ROOM IS RM_STUDY AND bookcase_moved THEN
+    NORTH := RM_PASSAGE
+ELSE
+    IF ROOM IS 17 AND door17_open THEN
+        EAST := 18
+    ELSE
+        IF ROOM IS 19 AND door19_open THEN
+            NORTH := 20
+        FI
+    FI
+FI
+```
+
+another keyword ELIF  (short for ELSE-IF)  has been added.  Using ELIF instead
+of ELSE IF makes the code look like this:
+
+```
+IF ROOM IS RM_STUDY AND bookcase_moved THEN
+    NORTH := RM_PASSAGE
+ELIF ROOM IS 17 AND door17_open THEN
+    EAST := 18
+ELIF ROOM IS 19 AND door19_open THEN
+    NORTH := 20
+FI
+```
+
+which is obviously more manageable if you need to add more tests and
+conditional statements.  
+
+
+The expression being tested is evaluated.  If it is TRUE then the
+statement(s) between THEN and ELSE  (or FI, if there is no ELSE)  are
+executed.  If the expression is FALSE then any statement(s) between
 ELSE and FI are executed.  In any case, execution proceeds after FI.
 
 ## BOOLEAN EXPRESSIONS
@@ -60,8 +137,8 @@ ELSE and FI are executed.  In any case, execution proceeds after FI.
 Boolean expressions can use AND, OR and NOT.  NOT has the highest priority.
 AND has a higher priority than OR.
 
-Boolean expressions can use AND and OR.  There is no NOT, but every test has
-an opposite-sense form anyway.  AND has a higher priority than OR.
+Boolean expressions can use AND and OR.  (There is no NOT, but every test
+has an opposite-sense form anyway.)  AND has a higher priority than OR.
 
 A list of terms separated by OR is evaluated only as far as the first TRUE
 test  (at which point we know the answer is TRUE).  A list of terms separated
@@ -225,8 +302,28 @@ ELSE
 FI
 ```
 
+## ASSIGNMENT
 
+Variable are assigned using statements of the form
 
+variable := value
+
+### SPECIAL VARIABLES
+
+**ROOM** is the current room.  (`R%` in BASIC)
+
+**VERB MOD NOUN** are the indices of the parsed words from the command.
+
+**DEST** is the destination room, if the command is a direction.
+
+**C0-C63** are the character registers within the game state.
+
+**L1-L127** are the locations of objects.
+
+**NORTH NE EAST SE SOUTH SW WEST NW UP DOWN BACK** are the exits from the
+current room in the corresponding directions.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
 
 ## MISCELLANEOUS
 
