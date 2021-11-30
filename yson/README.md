@@ -10,6 +10,43 @@ Requirements:
 + And not too fancy; there is always still BASIC if really needed.
 + Generate bare-metal 6502 code  (no intermediate step).
 
+The output is BeebAsm source code which performs the actual operations directly,
+with no intermdiate, interpreted step; i.e. a statement such as 
+```
+MESSAGE 13
+````
+will produce code such as
+```
+LDA #13
+JSR real_select_mesg
+```
+
+## 6502 HARDWARE LIMITATION
+
+Conditional branch instructions on the 6502  (BEQ, BNE, BCS, BCC, BVS, BVC,
+BMI and BPL) use a short address in the form of an offset from the current
+program counter position, and are therefore limited to a range of -128 ..
++127 bytes  (actually -129 .. +126 bytes from the first byte of the branch
+instruction, or -127 to +128 from the first byte of the next instruction,
+since the program counter gets increased just _before_ reading each byte
+of an instruction).
+
+This is by no means insurmountable, since one can always rewrite the code
+so as to perform the opposite test and either branch forward past an
+unconditional `JMP` instruction  (which uses a long address)  to the code
+that would have followed the original conditional branch, or fall through
+to the JMP.  This comes at a cost of requiring five bytes rather than the
+usual two.
+
+It is possible  (though unlikely)  for a very long series of tests in an
+`IF` statement to produce unassemblable code.  
+
+To avoid this, the BeebAsm output will incorporate macro definitions
+for `FAR_BNE`, `FAR_BEQ` and so forth, which implement the technique
+described above to allow for greater distances.  Wherever BeebAsm
+complains of `Branch out of range` errors, edit the source and prepend
+FAR_ to the offending instruction.
+
 # THE LANGUAGE
 
 Influenced by BBC BASIC  (Boolean expressions should be similar enough to be
@@ -388,6 +425,15 @@ if all tests returned FALSE, execution continues from the end of the list.
 # THE OUTPUT CODE
 
 The output will be in the form of a BeebAsm source code file.
+
+
+The code generation paradigm will be based on series of tests, falling
+through if another test is required or branching away as soon as a definite
+TRUE or FALSE is known.  The last test of an OR list, however, will be reversed
+so as to jump away if FALSE or fall through if TRUE.  This keeps behaviour
+consistent between AND and OR lists.
+
+Operation lists are of type AND and OR.
 
 
 
