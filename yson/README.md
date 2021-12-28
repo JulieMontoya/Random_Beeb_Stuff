@@ -186,19 +186,19 @@ know the answer to be FALSE).
 
 The following relations can be tested:
 
-## MONADIC RELATIONS
+## MONADIC (SINGLE-ENDED) RELATIONS
 
-A monadic relation involves one given term and one implied term.
+A monadic relation involves only one term  (and maybe an implied term).
 
-A monadic relation involves only one term.
-
-### POS : Positive  (including zero)
+### POZ : Positive Or Zero
 
 ```
-POS C3          \  TRUE if C3 is positive or zero
+POZ C3          \  TRUE if C3 is positive or zero
 ```
 
-This relation is TRUE if the value given is positive  (including zero).
+This relation is TRUE if the value given is positive  (including zero).  The
+spelling is deliberately chosen to stop you spelling it `POS` and wondering why
+it lets zero through!
 
 ### NEG : Negative
 
@@ -232,7 +232,7 @@ BITSET 6        \  TRUE if B6 is set
 BITUNSET C4     \  TRUE if the status bit pointed to by C4 is unset
 ```
 
-## DYADIC RELATIONS
+## DYADIC (DOUBLE-ENDED) RELATIONS
 
 ### IS, EQ : Equal
 
@@ -268,8 +268,34 @@ A GE B
 
 This relation is TRUE if the value of A is greater than or equal to the value of B.
 
-(There is no LE or GT, due to the 6502 internal architecture.  If this really nags
-at me, I'll add them by reversing the order of the terms in the GE / LT test.)
+### GT : Greater Than
+
+```
+A GT B
+```
+
+This relation is TRUE if the value of A is strictly greater than the value of B.
+(Actually, if the value of B is strictly smaller than the value of A, due to the
+6502's internal architecture -- there is no test for strictly greater, so it
+tests `B LT A`.)
+
+### LE : Less Than or Equal To
+
+```
+A LE B
+```
+
+This relation is TRUE if the value of A is smaller than or equal to the value of B.
+(Actually, if the value of B is greater than or equal to the value of A.)
+
+### MULTOF : Multiple Of
+
+```
+A MULTOF B
+```
+
+This relation is TRUE if the value of A is an exact multiple of the value of B; that
+is to say, if `A % B` is zero.  It can be thought of as a shortcut for `ZERO (A % B)`.
 
 ## TERMS WITHIN RELATIONS
 
@@ -277,14 +303,32 @@ Terms within relations may be literal values, symbolic constants or variables.
 
 
 
-## NUMERIC OPERATORS
+## MONADIC (SINGLE-ENDED) NUMERIC OPERATORS
 
-### LOC : Location of object
+### LOCOF : Location of object
 
 ```
-LOC glowstick   \ returns location of the glowstick
+LOCOF glowstick   \ returns location of the glowstick
 ```
 
+### EXIT : Destination in a direction
+
+```
+EXIT 3   \ returns destination in direction 3 (= East)
+```
+
+## DYADIC (DOUBLE-ENDED) NUMERIC OPERATORS
+
+### * / % + -
+
+The `*` (multiply), `/` (divide) and `%` (modulus) operators have a higher priority
+than the `+` (add) and `-` (subtract) operators; monadic operators have an even
+higher priority.  So `A + B * C` performs the multiplication before the addition.
+Brackets can be used to override the usual order of operations; (A + B) * C performs
+the addition before the multiplication.
+
+All mathematical operations are performed on 8-bit values, with compare operations
+treating values as unsigned.
 
 ## SHORTCUTS
 
@@ -316,7 +360,7 @@ FI
 
 This simply adds another `CMP` instruction to an AND / OR chain without
 reloading the accumulator between successive comparisons.  Three bytes of
-memory and four ticks of the clock in the hand 
+memory and four ticks of the clock in the hand, and all that .....
 
 Be very careful with _ elsewhere!
 
@@ -345,11 +389,13 @@ Variable are assigned using statements of the form
 
 variable := value
 
+The value can be any numeric expression.
+
 ### SPECIAL VARIABLES
 
 **ROOM** is the current room.  (`R%` in BASIC)
 
-**VERB MOD NOUN** are the indices of the parsed words from the command.
+**VERB*, **MOD** and **NOUN** are the indices of the parsed words from the command.
 
 **DEST** is the destination room, if the command is a direction.
 
