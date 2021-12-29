@@ -225,11 +225,11 @@ VISITED DEST    \  TRUE if destination room has been visited
 UNVISITED 12    \  TRUE if room 12 has not yet been visited
 ```
 
-### BITSET, BITUNSET : Whether or not a status bit is set
+### ISSET, UNSET : Whether or not a status bit is set
 
 ```
-BITSET 6        \  TRUE if B6 is set
-BITUNSET C4     \  TRUE if the status bit pointed to by C4 is unset
+ISSET 6         \  TRUE if B6 is set
+UNSET C4        \  TRUE if the status bit pointed to by C4 is unset
 ```
 
 ## DYADIC (DOUBLE-ENDED) RELATIONS
@@ -372,6 +372,26 @@ INCREASE C4 6   \  add one to C4 and take the remainder modulo 6
 DECREASE C9     \  subtract one from C9
 ```
 
+### INCREASE variable [num_expr]
+
+Adds one to a variable.  In its simplest form it would be used thus:
+
+```
+INCREASE air_used
+```
+
+It is possible to add a numeric value which will be treated as a limit;
+if it would have reached that value, it will instead be reset to 0:
+
+```
+INCREASE radio_song 3
+```
+
+changes the value in `radio_song` from 0 to 1, 1 to 2 and then from 2
+back to 0 again with successive calls.
+
+### DECREASE
+
 An example to handle a light source with limited energy:
 
 ```
@@ -383,11 +403,60 @@ ELSE
 FI
 ```
 
+### DOUBLE
+
+Doubles the value by shifting it leftwards one bit; always importing zero into
+bit 0.
+
+### HALVE
+
+Halves the value by shifting it rightwards one bit; always importing zero into
+bit 7.
+
+## OBJECT-RELATED COMMANDS
+
+Commands relating to objects.
+
+### DESTROY num_expr
+
+Moves the object with the given number to room 254, effectively placing it out
+of the game.
+
+### DROP num_expr
+
+Places the object with the given number in the player's room.
+
+### MOVE num_expr TO num_expr
+
+Places the object with the given number in the given room.
+
+## GAME COMMANDS
+
+Commands related to progress within the game.
+
+### MESSAGE num_expr
+
+Displays the message with the given ID number.
+
+### LIVE num_expr
+
+Sets the verb to `VB_LIVE` and the message to the given number.  Any
+error condition will be overridden when the command is actioned; the
+message is displayed and the player gets another turn.
+
+### DIE num_expr
+
+Sets the verb to `VB_DIE` and the message to the given number.  Any
+error condition will be overridden when the command is actioned; the
+message is displayed and the game is over.
+
 ## ASSIGNMENT
 
 Variable are assigned using statements of the form
 
+```
 variable := value
+```
 
 The value can be any numeric expression.
 
@@ -417,26 +486,6 @@ DONE
 
 Return directly to BASIC without executing any more code.  An implied DONE
 is automatically appended to a program.
-
-
-### ERROR
-```
-ERROR SM_CANT_DO
-```
-
-Set `E%` to the given value and return to BASIC.
-
-### LIVE, DIE
-
-```
-LIVE 56
-DIE 11
-```
-
-Set `V%` to `VB_LIVE` or `VB_DIE` as applicable and `M%` to the given value,
-and return to BASIC.
-
-
 
 # CONCEPTS
 
