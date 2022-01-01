@@ -144,6 +144,15 @@ know _exactly_ what you are doing.
 LOCOF glowstick   \ returns location of the glowstick
 ```
 
+### STARTROOM : Starting location of an object
+
+```
+STARTROOM glowstick     \ returns starting location of glowstick
+```
+
+Returns the location in which a given object will be found at the
+beginning of a new game.
+
 ### EXIT : Destination in a direction
 
 ```
@@ -170,14 +179,15 @@ have an even higher priority.  So `A + B * C` performs the multiplication
 before the addition.  Brackets can be used to override the usual order of
 operations; (A + B) * C performs the addition before the multiplication.
 
-If you do not use the `*` , `/` or `%` operators or perform any `INCREASE`s
-with a limit, you can choose to make the runtime overhead smaller.
+_If you do not use the `*` , `/` or `%` operators or perform any `INCREASE`s
+with a limit, you can choose to make the runtime overhead smaller._
 
 # VARIABLES
 
 Game state registers are used for variables.  These may be referred to
 directly as **B0..255**, **C0..C63**, **V1..V255** and **L0..L63** and some
 others such as **VERB**, or via _symbolic constants_ such as `coin_found`.
+Constants may be defined in the SQLite database.
 
 ## ASSIGNMENT
 
@@ -460,13 +470,297 @@ This relation is TRUE if the value of A is an exact multiple of the value of
 B; that is to say, if `A % B` is zero.  It can be thought of as a shortcut
 for `ZERO (A % B)`.
 
+### HASANY
+
+```
+A HASANY B
+```
+
+This relation is TRUE if A and B have any "1" bits in common.
+
+### HASALL
+
+```
+A HASALL B
+```
+
+This relation is TRUE if A and B have _all_ "1" bits in common.
+
+### HASNONE
+
+```
+A HASNONE B
+```
+
+This relation is TRUE if A and B have _no_ "1" bits in common.
+
 ## IMPLICIT RELATIONS
 
 ### CARRY
 
 This is TRUE if the previous arithmetic operation resulted in a carry, or if
 the carry was deliberately set in a `PROC`.  Note that the carry flag is apt
-to change at any time, so use this with caution: test it immediately, and
+to change at any time, so use th658
+
+### SHOW num_expr
+
+659
+
+​
+
+660
+
+Displays the given value as a decimal number between 0 and 255, and leaves
+
+661
+
+the cursor on the same line ready for more text.
+
+662
+
+​
+
+663
+
+_The compiler could use an option to gather up the text from any SAY
+
+664
+
+statements and add it as messages in the SQLite database._
+
+665
+
+​
+
+666
+
+### SHIFT
+
+667
+
+​
+
+668
+
+Forces the next letter printed to be capitalised.
+
+669
+
+​
+
+670
+
+### NEWLINE
+
+671
+
+​
+
+672
+
+Starts a new line.
+
+673
+
+​
+
+674
+
+### LIVE num_expr
+
+675
+
+​
+
+676
+
+Sets the verb to `VB_LIVE` and the message to the given number.  Any
+
+677
+
+error condition will be overridden when the command is actioned; the
+
+678
+
+message is displayed and the player gets another turn.
+
+679
+
+​
+
+680
+
+### DIE num_expr
+
+681
+
+​
+
+682
+
+Sets the verb to `VB_DIE` and the message to the given number.  Any
+
+683
+
+error condition will be overridden when the command is actioned; the
+
+684
+
+message is displayed and the game is over.
+
+685
+
+​
+
+686
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+687
+
+​
+
+688
+
+## MISCELLANEOUS
+
+689
+
+​
+
+690
+
+### DONEis with caution: test it658
+
+### SHOW num_expr
+
+659
+
+​
+
+660
+
+Displays the given value as a decimal number between 0 and 255, and leaves
+
+661
+
+the cursor on the same line ready for more text.
+
+662
+
+​
+
+663
+
+_The compiler could use an option to gather up the text from any SAY
+
+664
+
+statements and add it as messages in the SQLite database._
+
+665
+
+​
+
+666
+
+### SHIFT
+
+667
+
+​
+
+668
+
+Forces the next letter printed to be capitalised.
+
+669
+
+​
+
+670
+
+### NEWLINE
+
+671
+
+​
+
+672
+
+Starts a new line.
+
+673
+
+​
+
+674
+
+### LIVE num_expr
+
+675
+
+​
+
+676
+
+Sets the verb to `VB_LIVE` and the message to the given number.  Any
+
+677
+
+error condition will be overridden when the command is actioned; the
+
+678
+
+message is displayed and the player gets another turn.
+
+679
+
+​
+
+680
+
+### DIE num_expr
+
+681
+
+​
+
+682
+
+Sets the verb to `VB_DIE` and the message to the given number.  Any
+
+683
+
+error condition will be overridden when the command is actioned; the
+
+684
+
+message is displayed and the game is over.
+
+685
+
+​
+
+686
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+687
+
+​
+
+688
+
+## MISCELLANEOUS
+
+689
+
+​
+
+690
+
+### DONE immediately, and
 set or clear it immediately before an `ENDPROC`.
 
 Remember also that `INCREASE` does not affect the carry flag; you will need
@@ -486,6 +780,18 @@ to increase a multi-byte value.
 
 This is TRUE if the previous arithmetic operation resulted in a carry, or if
 the carry was deliberately cleared in a `PROC`.
+
+### OVERFLOW
+
+This is TRUE if the previous arithmetic operation resulted in a false change
+of sign due to a result falling in the ranges 128..255 or -255..-129, or if
+the overflow flag was deliberately set.
+
+### NOOVERFLOW
+
+This is TRUE if the previous arithmetic operation produced a result in the
+range -128..127, with the sign bit correct, or if the overflow flag was
+deliberately cleared.
 
 ## TERMS WITHIN RELATIONS
 
@@ -555,7 +861,7 @@ FI
 changes the value in `radio_song` from 0 to 1, 1 to 2 and then from 2
 back to 0 again with successive calls.
 
-### DECREASE
+### DECREASE variable
 
 Subtracts one from a variable; if it goes negative, 256 is added.
 
@@ -570,12 +876,12 @@ ELSE
 FI
 ```
 
-### DOUBLE
+### DOUBLE variable
 
 Doubles the value by shifting it leftwards one bit; always importing zero into
 bit 0.
 
-### HALVE
+### HALVE variable
 
 Halves the value by shifting it rightwards one bit; always importing zero into
 bit 7.
@@ -625,6 +931,22 @@ Commands related to progress within the game.
 
 Displays the message with the given ID number.
 
+### SAY "text"
+
+Displays text between speech marks, and leaves the cursor on the same line
+ready for more text.
+
+Note:  Prefer **MESSAGE** over **SAY**; messages in the game database are
+stored in a compressed form and take up less space.
+
+### SHOW num_expr
+
+Displays the given value as a decimal number between 0 and 255, and leaves
+the cursor on the same line ready for more text.
+
+_The compiler could use an option to gather up the text from any SAY
+statements and add it as messages in the SQLite database._
+
 ### SHIFT
 
 Forces the next letter printed to be capitalised.
@@ -664,59 +986,33 @@ The `FOR` loop has the following syntax:
 ```
 FOR num_expr [ASC|DESC] num_expr
     statements using _
+    LASTIF bool_expr
 NEXT
 ```
 
 The statements within the loop will be executed repeatedly, each time with
 the special variable `_` set to a value starting with the first num_expr
 supplied, and then ascending or descending one at a time to the second
-num_expr. 
+num_expr.
+
+The `LASTIF` statement provides a way to exit the loop prematurely, with
+execution resuming after the `NEXT` as though the loop had completed if
+the Boolean expression is TRUE.
 
 ## FOREACH LOOP
 
 The `FOREACH` loop has the following syntax:
 
 ```
-FOREACH [ROOM|OBJECT]
+FOREACH ROOM|OBJECT|table_name
     statements using _
+    LASTIF bool_expr
 NEXT
 ```
 
 The statements within the loop will be executed repeatedly, each time with
 the special variable `_` set to the number of a room, or an object, in
 turn.
-
-Here is an example to list the contents of a bag, where the special room
-represented by `RM_inbag` is used for objects that have been placed in the
-bag:
-
-```
-SET bagempty
-FOREACH OBJECT
-    IF LOCOF _ IS RM_inbag THEN
-        IF bagempty THEN
-            SAY "The bag contains:"
-            NEWLINE
-            CLEAR bagempty
-        FI
-        SAY "* "
-        BRIEF _
-        NEWLINE
-    FI
-NEXT
-IF bagempty THEN
-    SAY "There is nothing in the bag."
-    NEWLINE
-FI
-```
-
-The state bit `bagempty` is initially set, and we iterate over the objects in
-turn.  If an object is found in the bag, and the `bagempty` bit is set, we
-display a short message and clear `bagempty`; this ensures the message will
-be displayed the first time only.  Then we print a bullet point and the brief
-description of the object.  After we have been around the loop for the last
-time, if `bagempty` is still set then we display a message that there is
-nothing in the bag.
 
 `FOREACH ROOM` sets not only _ to the number of the room; but also all the
 associated special variables `NORTH`, `SE`, `LIGHT` and so forth.  If all you
@@ -728,6 +1024,81 @@ room to be unpacked at a time, and direction commands rely on the _current_
 room being unpacked _and_ its light status and exits updated as required _even
 at the action_cmd stage_.  You should ensure only to do anything with rooms on
 non-direction commands.
+
+## PROCEDURES
+
+`PROC`edures can take a single optional parameter, and can optionally return
+two bits of state information via the `CARRY` and `OVERFLOW` flags.
+
+## FUNCTIONS
+
+Functions take a single parameter and return a single value.
+
+Functions behave exactly like the other monadic operators:  it is not
+necessary to enclose a function parameter in brackets if it is a variable
+name or constant, or another operator.
+
+## TABLES
+
+A table is simply a list of predetermined values, which may either be bytes,
+or packed bits or nybbles; which can be accessed in the program via an
+eponymous operator that accepts a numeric expression as an argument, and
+returns either a Boolean value for a BIT table, or a numeric value for a
+NYBBLE or BYTE table. 
+
+```
+TABLE table_name BIT|NYBBLE|BYTE
+num_const [num_const ...]
+ELBAT
+```
+
+The table definition line requires a table name and a data size, which may
+be BIT, NYBBLE or BYTE.  Bits can hold only 0 or 1, but eight bits can be
+packed into a single byte; and nybbles can only hold nalues between 0 and 15,
+but two nybbles can be packed into a byte.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+The values are separated by whitespace and terminated by the delimiter `ELBAT`
+(i.e. TABLE spelt backwards).  They may be accessed using the table name as a
+monadic operator of the appropriate type.
+
+## TABLE OPERATIONS
+
+### num_expr ISIN table_name
+
+This is TRUE if a value is found in the table which matches the given numeric
+expression.
+
+### num_expr NOTIN table_name
+
+This is TRUE ifd a value is _not_ found in the table which matches the given
+numeric expression.
+
+### FOREACH table_name ... NEXT
+
+This iterates over a table, placing each value in turn in the special variable
+`_`.
+
+```
+TABLE TREASURE BYTE
+11 13 17 19 23 29
+ELBAT
+
+IF VERB IS VB_SCORE THEN
+    score := 0
+    FOREACH TREASURE
+        IF LOCOF _ IS RM_vault THEN
+            score := score + 10
+        ELIF LOCOF _ ISNT STARTROOM _ THEN
+            score := score + 1
+        FI
+    NEXT
+    SAY "You have scored "
+    SHOW score
+    SAY " out of a possible 60."
+    NEWLINE
+FI
+```
 
 # CONCEPTS
 
@@ -783,6 +1154,112 @@ so as to jump away if FALSE or fall through if TRUE.  This keeps behaviour
 consistent between AND and OR lists.
 
 Operation lists are of type AND and OR.
+
+# COOKBOOK RECIPES
+
+Some example puzzle implementation code which you may be able to adapt for
+use in your own games.  This is necessarily incomplete, but I have tried to
+explain what you will need to add.
+
+## LIMITED CARRYING CAPACITY
+
+The AdveBuilder engine by default allows you to pick up and carry almost any
+object within the game.  This is somewhat unrealistic, so you probably will
+want to add some sort of carrying limit to make the gameplay more authentic.
+
+One approach would be simply to count the number of objects carried:
+
+```
+IF VERB IS VB_TAKE AND ZERO ERROR THEN
+    IF obj_count + uio_count GE 6 THEN
+        ERROR SM_HANDS_FULL
+    FI
+FI
+```
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+If the verb is TAKE and no other error condition has occurred, then we check
+the value of `obj_count`  (which gets set equal to the number of objects in
+hand during `disp_desc`, after the light status is known and objects the
+player originally picked up in the dark might have become identifiable)  plus
+the value of `uio_count`  (the same for unidentified objects)  and if this
+is more than 6, we set the error to a stock message  (which you will have to
+add to the SQLite database with the appropriate tag)  telling the player they
+are already carrying too much.  This will cause `action_cmd` to display the
+stock message for the error instead of adding the object to the inventory.
+
+Otherwise, we have room for the new object.  Any further logic on the TAKE
+command such as would normally follow `IF VERB IS VB_TAKE THEN` can be added
+as an `ELSE` inserted between lines 4 and 5 above.
+
+A more complex example might involve assigning a weight to each object and
+requiring the total weight be below some maximum.  This will require
+builing up a table to hold the weight of each object.
+
+```
+TABLE WEIGHT NYBBLE
+0 \ DUMMY VALUE, AS THERE IS NO OBJECT 0
+1 1 0 1 1 2 0 1 1 2
+\ WE MIGHT AS WELL USE WEIGHT=0 FOR AN UNCARRYABLE OBJECT
+\ 0 0 4 3 0
+\ AND SO ON ...
+ELBAT
+
+IF VERB IS VB_TAKE AND ZERO ERROR THEN
+    total_weight := WEIGHT NOUN
+    FOREACH OBJECT
+        IF CARRYING _ OR LOCOF _ IS 255 THEN
+            total_weight := total_weight + WEIGHT _
+        FI
+    NEXT
+    IF total_weight GE 16 THEN
+        ERROR SM_HANDS_FULL
+    ELIF NOUN IS rabbit AND NOCARRY carrot THEN
+        LIVE MSG_runs_away
+    ELIF NOUN IS whisky AND id_unshown THEN
+        LIVE MSG_show_id
+    FI
+FI
+
+```
+
+Here we have added some example TAKE logic, which will require corresponding
+messages such as "You try to catch the rabbbit, but it runs away!" and
+"You don't look old enough to be buying that! Got any ID?"
+
+## CONTAINERS
+
+Here is an example to list the contents of a bag, where the special room
+represented by `RM_inbag` is used for objects that have been placed in the
+bag:
+
+```
+SET bagempty
+FOREACH OBJECT
+    IF LOCOF _ IS RM_inbag THEN
+        IF bagempty THEN
+            SAY "The bag contains:"
+            NEWLINE
+            CLEAR bagempty
+        FI
+        SAY "* "
+        BRIEF _
+        NEWLINE
+    FI
+NEXT
+IF bagempty THEN
+    SAY "There is nothing in the bag."
+    NEWLINE
+FI
+```
+
+The state bit `bagempty` is initially set, and we iterate over the objects in
+turn.  If an object is found in the bag, and the `bagempty` bit is set, we
+display a short message and clear `bagempty`; this ensures the message will
+be displayed the first time only.  Then we print a bullet point and the brief
+description of the object.  After we have been around the loop for the last
+time, if `bagempty` is still set then we display a message that there is
+nothing in the bag.
 
 
 
