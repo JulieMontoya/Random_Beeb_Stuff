@@ -470,9 +470,10 @@ This relation is TRUE if the value of A is an exact multiple of the value of
 B; that is to say, if `A % B` is zero.  It can be thought of as a shortcut
 for `ZERO (A % B)`.
 
-### HASANY
+### HAS, HASANY
 
 ```
+A HAS B
 A HASANY B
 ```
 
@@ -504,263 +505,41 @@ to change at any time, so use th658
 
 ### SHOW num_expr
 
-659
-
-​
-
-660
-
 Displays the given value as a decimal number between 0 and 255, and leaves
-
-661
 
 the cursor on the same line ready for more text.
 
-662
-
-​
-
-663
-
 _The compiler could use an option to gather up the text from any SAY
-
-664
-
 statements and add it as messages in the SQLite database._
-
-665
-
-​
-
-666
 
 ### SHIFT
 
-667
-
-​
-
-668
-
 Forces the next letter printed to be capitalised.
-
-669
-
-​
-
-670
 
 ### NEWLINE
 
-671
-
-​
-
-672
-
 Starts a new line.
-
-673
-
-​
-
-674
 
 ### LIVE num_expr
 
-675
-
-​
-
-676
-
 Sets the verb to `VB_LIVE` and the message to the given number.  Any
-
-677
-
 error condition will be overridden when the command is actioned; the
-
-678
-
 message is displayed and the player gets another turn.
-
-679
-
-​
-
-680
 
 ### DIE num_expr
 
-681
-
-​
-
-682
-
 Sets the verb to `VB_DIE` and the message to the given number.  Any
-
-683
-
 error condition will be overridden when the command is actioned; the
-
-684
-
 message is displayed and the game is over.
-
-685
-
-​
-
-686
 
 .........!.........!.........!.........!.........!.........!.........!.........!
 
-687
-
-​
-
-688
-
 ## MISCELLANEOUS
-
-689
-
-​
-
-690
-
-### DONEis with caution: test it658
-
-### SHOW num_expr
-
-659
-
-​
-
-660
-
-Displays the given value as a decimal number between 0 and 255, and leaves
-
-661
-
-the cursor on the same line ready for more text.
-
-662
-
-​
-
-663
 
 _The compiler could use an option to gather up the text from any SAY
-
-664
-
 statements and add it as messages in the SQLite database._
 
-665
-
-​
-
-666
-
-### SHIFT
-
-667
-
-​
-
-668
-
-Forces the next letter printed to be capitalised.
-
-669
-
-​
-
-670
-
-### NEWLINE
-
-671
-
-​
-
-672
-
-Starts a new line.
-
-673
-
-​
-
-674
-
-### LIVE num_expr
-
-675
-
-​
-
-676
-
-Sets the verb to `VB_LIVE` and the message to the given number.  Any
-
-677
-
-error condition will be overridden when the command is actioned; the
-
-678
-
-message is displayed and the player gets another turn.
-
-679
-
-​
-
-680
-
-### DIE num_expr
-
-681
-
-​
-
-682
-
-Sets the verb to `VB_DIE` and the message to the given number.  Any
-
-683
-
-error condition will be overridden when the command is actioned; the
-
-684
-
-message is displayed and the game is over.
-
-685
-
-​
-
-686
-
-.........!.........!.........!.........!.........!.........!.........!.........!
-
-687
-
-​
-
-688
-
-## MISCELLANEOUS
-
-689
-
-​
-
-690
-
-### DONE immediately, and
+### DONE
 set or clear it immediately before an `ENDPROC`.
 
 Remember also that `INCREASE` does not affect the carry flag; you will need
@@ -1067,38 +846,119 @@ monadic operator of the appropriate type.
 ### num_expr ISIN table_name
 
 This is TRUE if a value is found in the table which matches the given numeric
-expression.
+expression.  (The table must be of type NYBBLE or BYTE.)
 
 ### num_expr NOTIN table_name
 
-This is TRUE ifd a value is _not_ found in the table which matches the given
-numeric expression.
+This is TRUE if a value is _not_ found in the table which matches the given
+numeric expression.  (The table must be of type NYBBLE or BYTE.)
+
+### LAST table_name
+
+This returns the index of the last entry in the named table.
 
 ### FOREACH table_name ... NEXT
 
-This iterates over a table, placing each value in turn in the special variable
-`_`.
+This iterates over the entries in a table, at the expense of losing access to
+the indices   (if you need the indices, you can always use
+`FOR 0 ASC LAST table_name` instead of FOREACH).
+
+If the table is of type NYBBLE or BYTE, each _value_ is placed in turn in the
+special variable `_`.
+
+If the table is of type BIT, each _index_ is placed in turn in the special
+variable `_`; the _value_ must be read using `ISSET _`.
+
+
+The below code is an example to implement a scoring scheme where points are
+awarded for collecting treasures and completing tasks.
+
+Points can be scored for picking up treasures and even more points for
+depositing them in a vault, as follows:
+
+Location of Treasure       | Points
+---------------------------|-------
+Anywhere but starting room | 1
+Carried                    | 5
+Vault                      | 10
+
+The treasures are objects 11, 13, 17, 19, 23 and 29.  Additional points are
+awarded for completing tasks:
+
+Bit  | Task                  | Points
+-----+-----------------------+-------------
+B51  | Rescue kitten         | 5
+B52  | Turn off oven         | 5
+B53  | Set VCR timer         | 20
+B54  | Solve light puzzle    | 10
+B55  | Restore factory power | 10
+B57  | Open gate             | 5
+
+We need to create tables to hold the numbers of the "treasure" objects, the
+game state bits which indicate the tasks have been completed and the point
+value of each one.
 
 ```
 TABLE TREASURE BYTE
 11 13 17 19 23 29
 ELBAT
 
+TABLE TASK BYTE
+51 52 53 54 55 57
+ELBAT
+
+TABLE POINTS NYBBLE
+1 1 4 2 2 1
+ELBAT
+
+.....
+
 IF VERB IS VB_SCORE THEN
     score := 0
+    max_sc := 0
     FOREACH TREASURE
+        max_sc := max_sc + 10
         IF LOCOF _ IS RM_vault THEN
             score := score + 10
+        ELIF CARRYING _ THEN
+            score := score + 5
         ELIF LOCOF _ ISNT STARTROOM _ THEN
             score := score + 1
         FI
     NEXT
+    FOR 0 ASC LAST TASK
+        st_bit := TASK _
+        pts = 5 * POINTS _
+        max_sc := max_sc + pts
+        IF ISSET st_bit THEN
+            score := score + pts
+        FI
+    NEXT
     SAY "You have scored "
     SHOW score
-    SAY " out of a possible 60."
+    SAY " out of a possible "
+    SHOW max_sc
+    SAY "."
     NEWLINE
 FI
 ```
+
+Points to note:
++ The point values for tasks are all multiples of 5 and less than 80, so we can store them divided by 5 in a NYBBLE table.
++ We calculate the maximum score as we go along.  This minimises the number of changes if we want to add or remove treasures or tasks in future.
++ Speaking of changing anything, the `TASK` and `POINTS` tables must be kept carefully in sync with one another.
+
+It is OK to use a table, or even several BIT tables, with an entry for every
+room or object; such tables are already compacted, with at most one byte wasted
+in a table whose length is not a multiple of 8.  The data would not take up
+any less space if the functionality were added to the game engine and the
+table made a part of the SQLite database, with appropriate extensions to the
+build scripts.
+
+However, you should definitely consider extending the game engine code and
+build scripts if you find yourself implementing a particular functionality in
+every game you write.
+
 
 # CONCEPTS
 
@@ -1214,7 +1074,7 @@ IF VERB IS VB_TAKE AND ZERO ERROR THEN
     NEXT
     IF total_weight GE 16 THEN
         ERROR SM_HANDS_FULL
-    ELIF NOUN IS rabbit AND NOCARRY carrot THEN
+    ELIF NOUN IS rabbit AND NOTGOT carrot THEN
         LIVE MSG_runs_away
     ELIF NOUN IS whisky AND id_unshown THEN
         LIVE MSG_show_id
