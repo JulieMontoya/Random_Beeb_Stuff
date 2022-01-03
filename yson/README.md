@@ -715,6 +715,11 @@ Displays the message with the given ID number.
 Displays text between speech marks, and leaves the cursor on the same line
 ready for more text.
 
+### SAY "text" {[ num_expr [ "text" ]]}
+
+You can include numeric expressions as long as they appear in strict
+alternation with "phrases in speech marks".
+
 Note:  Prefer **MESSAGE** over **SAY**; messages in the game database are
 stored in a compressed form and take up less space.
 
