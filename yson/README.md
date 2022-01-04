@@ -1126,6 +1126,89 @@ description of the object.  After we have been around the loop for the last
 time, if `bagempty` is still set then we display a message that there is
 nothing in the bag.
 
+# ARCHITECTURE
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+The output code implements `IF` as a series of tests, which either pass to
+the next or branch once a result is known for certain  (a FALSE result in an
+AND chain, or a TRUE result in an OR chain).
+
+Addition and subtraction operations use the accumulator as one operand.  
+More complicated numeric operations use a separate operand stack implemented
+in software.
+
+Functions take a single parameter and return a single value.  The value is
+always returned in the accumulator, but some functions expect the parameter
+in the X register. 
+
+
+Consider a very simple numeric expression
+```
+A + B - C
+```
+We parse this as
+```
+GET A
+ADD B
+SUB C
+```
+
+An expression such as `A * B + C` is parsed as
+```
+GET A
+MUL B
+ADD C
+```
+However, if it had been written `C + B * A`, it would be parsed as
+```
+GET C
+GET
+    GET B
+    MUL A
+MUL
+```
+
+
+
+
+Consider a numeric expression such as
+```
+A + B * (C - D) - E
+```
+
+
+
+
+This is parsed to produce a tree such as the following:
+```
+GET A
+    GET B
+        GET C
+        SUB D
+    MULT
+ADD
+SUB E
+```
+
+Not only do we have to interrupt the additions to perform the multiplication,
+but we have to interrupt the multiplication to subtract D from C. 
+
+
+The first GET of an expression does not affect the stack.  Subsequent GETs
+into the accumulator push the accumulator onto the calculation stack before
+getting the new value.
+
+An expression such as
+```
+POINTS _ * 5
+```
+parses as
+```
+GET _
+POINTS
+MULT 5
+```
+
 
 
 # NOTE
@@ -1134,4 +1217,5 @@ YSON should have been called ABEL (for AdveBuilder Extension Language)  but
 that acronym was already taken.  (cf. the manpage for the `dd` command).
 
 .........!.........!.........!.........!.........!.........!.........!.........!
+
 
