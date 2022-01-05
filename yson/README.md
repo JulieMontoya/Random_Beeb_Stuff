@@ -1141,6 +1141,31 @@ Functions take a single parameter and return a single value.  The value is
 always returned in the accumulator, but some functions expect the parameter
 in the X register. 
 
+Numeric expressions are parsed to form a tree.
+
+Within the tree, we have a number of simple instructions which can be turned
+into assembly instructions.  These are: `GET` a value into the accumulator,
+X or Y resister; `ADD`, `SUB`, `MUL`, `DIV` and `MOD` operations; and
+function calls.
+
+When the target of a `GET` is the accumulator, the value currently in the
+accumulator is pushed onto the stack.
+
+There are two forms of `ADD`, `SUB`, `MUL`, `DIV` and `MOD` operations.  In
+the first, simpler case, the first operand is already in the accumulator;
+and the second operand is supplied along with the operation.  In the
+other, more complex case, the first operand is on the top of the stack and
+the second operand is in the accumulator.
+
+The first stage of parsing the expression is to separate out all bracketed
+sub-expressions.
+
+The expression is then split into a list of terms with `+` and `-` operators
+between them.  The first term in the list takes the implied operation GET;
+each subsequent term takes its supplied operation.  Each of these lists is
+further split into lists of terms beginning with `GET` and having `*`, `/`
+and `%` operators between them.
+
 
 Consider a very simple numeric expression
 ```
@@ -1159,15 +1184,34 @@ GET A
 MUL B
 ADD C
 ```
+First we GET the value of A into the accumulator.  This is the first GET
+of an expression, so it does not push the stack.  Then we multiply whatever
+is in the accumulator by B, leaving the product in the accumulator.  Then
+we add C to the accumulator, and this is the answer we want.
+
 However, if it had been written `C + B * A`, it would be parsed as
 ```
 GET C
-GET
     GET B
     MUL A
-MUL
+ADD
 ```
+The augend here is the simple term C, but the addend is the product B * A.
+This is not a simple term we could GET straight away.  So we have to interrupt
+the addition we have already begun, in order to perform the multiplication
+step.  We push the accumulator onto the stack and get a new value into the
+accumulator; indentation has been used to show this.  Then we multiply the
+contents of the accumulator by A.  We store this in some temporary safe
+location, pull the top of the stack into the accumulator and add the value
+we stored to this.  At the end of all this, the answer we want is in the
+accumulator.
 
+Breaking the order like this carries a slight penalty in terms of code size,
+and therefore execution time.
+
+
+
+.........!.........!.........!.........!.........!.........!.........!.........!
 
 
 
