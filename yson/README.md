@@ -21,6 +21,17 @@ LDA #13
 JSR real_select_mesg
 ```
 
+This is just five bytes of binary code from ten bytes of source code.
+
+A fairer comparison might be with the equivalent BASIC, which would have been
+something like:
+```
+900PROCm(13)
+```
+This would require two bytes for the line number, one byte for the line length,
+one byte for the PROC token, five for m(13) and one more byte for a closing \r,
+so in this case there is a saving.
+
 ## 6502 HARDWARE LIMITATION
 
 Conditional branch instructions on the 6502  (BEQ, BNE, BCS, BCC, BVS, BVC,
@@ -1141,7 +1152,10 @@ Functions take a single parameter and return a single value.  The value is
 always returned in the accumulator, but some functions expect the parameter
 in the X register. 
 
-Numeric expressions are parsed to form a tree.
+Numeric expressions are parsed to form an operation tree.
+
+Each branch of the tree begins with a `GET` operation, which pushes the
+stack and fetches a value into the accumulator, 
 
 Within the tree, we have a number of simple instructions which can be turned
 into assembly instructions.  These are: `GET` a value into the accumulator,
