@@ -902,7 +902,7 @@ The treasures are objects 11, 13, 17, 19, 23 and 29.  Additional points are
 awarded for completing tasks:
 
 Bit  | Task                  | Points
------+-----------------------+-------------
+-----|-----------------------|-------------
 B51  | Rescue kitten         | 5
 B52  | Turn off oven         | 5
 B53  | Set VCR timer         | 20
