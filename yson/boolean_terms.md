@@ -118,3 +118,20 @@ OR list: false  | jump away    | jump away    | fall through
 OR list: true   | fall through | fall through | branch away
 AND list: false | jump away    | jump away    | fall through
 AND list: true  | fall through | fall through | branch away
+
+
+
+
+
+
+Result                    | Not in list          | in AND list           | in OR list
+--------------------------|----------------------|-----------------------|---------------------
+Middle of OR list: false  | fall through         | fall through          | fall through
+Middle of OR list: true   | branch away          | branch to end         | branch away
+End of OR list: false     | jump away            | jump away             | fall through and out
+End of OR list: true      | fall through and out | fall through and out  | branch away
+Middle of AND list: false | jump away            | jump away             | branch to end
+Middle of AND list: true  | fall through         | fall through          | 
+End of AND list: false    | jump away            | jump away             | fall through and out
+End of AND list: true     | fall through and out | fall through and out  | branch away
+
