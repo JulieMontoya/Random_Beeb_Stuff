@@ -873,17 +873,32 @@ numeric expression.  (The table must be of type NYBBLE or BYTE.)
 
 This returns the index of the last entry in the named table.
 
-### FOREACH table_name ... NEXT
+### INDEX table_name num_expr [ AFTER num_expr ]
+
+This returns the index of the first occurrence of the given numeric expression
+in the given table.  If an AFTER clause is specified, the search starts from
+that index in the table.  If the expression is not found in the table, 255 will
+be returned.
+
+### COUNT table_name num_expr [ AFTER num_expr ]
+
+This returns the number of times a given numeric expression occurs within the
+given table.  If an AFTER clause is specified, the search starts from
+that index in the table. 
+
+### FOREACH [UNSET] table_name ... NEXT
 
 This iterates over the entries in a table, at the expense of losing access to
-the indices   (if you need the indices, you can always use
-`FOR 0 ASC LAST table_name` instead of FOREACH).
+the indices   (if you need the indices, you can always use the construction
+`FOR 0 ASC LAST table_name` instead of `FOREACH`).
 
 If the table is of type NYBBLE or BYTE, each _value_ is placed in turn in the
-special variable `_`.
+special variable `_`.  `UNSET` makes no difference.
 
 If the table is of type BIT, each _index_ is placed in turn in the special
-variable `_`; the _value_ must be read using `ISSET _`.
+variable `_`, but only if the bit in the table is set  (or only if the bit is
+_un_set, if `UNSET` is specified).  Indices of bits not in the desired state
+are skipped.
 
 
 The below code is an example to implement a scoring scheme where points are
@@ -898,8 +913,10 @@ Anywhere but starting room | 1
 Carried                    | 5
 Vault                      | 10
 
-The treasures are objects 11, 13, 17, 19, 23 and 29.  Additional points are
-awarded for completing tasks:
+The treasures are objects 11, 13, 17, 19, 23 and 29.
+
+Additional points are awarded for completing tasks, depending on their
+complexity:
 
 Bit  | Task                  | Points
 -----|-----------------------|-------------

@@ -2025,6 +2025,10 @@ sub recurse {
                 else {
                     ###########  AND LIST IN AND  LIST OR OUTERMOST  ###########
                     printf "${indent}\\ %d AND list not in OR list.\n", __LINE__;
+                    if (@terms == 1) {
+                        printf "${indent}\\ First and only term!\n";
+                        $branch_if = TRUE;
+                    };
                 };
                 
             };
@@ -2488,6 +2492,10 @@ sub new {
             #return $self->if($stmt);
             ($self, $stmt) = $self->if($stmt);
         }
+        elsif ($stmt =~ /^\s*(SAY\S*)/) {
+            printf "We have a SAY command:\n'%s'\n", $stmt;
+            ($self, $stmt) = $self->say($stmt);
+        }
         elsif ($stmt =~ /^\s*(MESSAGE|DROP|DESTROY)/) {
             printf "We have a one-argument command:\n'%s'\n", $stmt;
             ($self, $stmt) = $self->one_arg($stmt);
@@ -2786,6 +2794,57 @@ sub if {
     ($self, $after);
 };
 
+sub say {
+    #my ($index, $begin, $length, $assign, $cmd, $value, $expr, $after);
+    my (@items, $cmd, $items, $type, $before, $phrase, $after, $new_cmd);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(SAY\S*)\s*(.*)$//m) {
+        $cmd = $1;
+        $items = $2;
+        print "~" x 70, "\n";
+        printf "Parsing '%s' command '%s'\n", $cmd, $items;
+        while ($items =~ /^(.*?)"(.*?)(?<!")"(?!")(.*)$/) {
+#                               | |      |  |  |
+#         opening speech mark --' |      |  |  |
+#                          quoted phrase |  |  |
+#                    not preceded by " --'  |  `-- not followed by "
+#                                           `-- closing speech mark
+            $before = $1;
+            $phrase = $2;
+            $after = $3;
+            $before =~ s/^\s*|\s*$//g;
+            $after =~ s/^\s*|\s*$//g;
+            #printf "Before: '%s'\nPhrase: '%s'\nAfter : '%s'\n", $before, $phrase, $after;
+            if ($before) {
+                printf "Before: '%s'\n", $before;
+                push @items, new NumExpr($before);
+            };
+            printf "Phrase: '%s'\n", $phrase;
+            push @items, $phrase if $phrase;
+            
+            $items = $after;
+        };
+        print "~" x 70, "\n";
+        print "Done parsing.\n";
+        
+        if ($after = $items) {
+            printf "After : '%s'\n", $after;
+            push @items, new NumExpr($after);
+            $after = "";
+        };
+    };
+
+    $new_cmd = { "_cmd" => $cmd,
+                 "_items" => [@items],
+                 "_serial" => ++$Stmt::stmt_serial };
+    $self->append(bless ($new_cmd, "Stmt::Say"));
+    
+    ($self, $stmt);
+};
+
 sub one_arg {
     my ($index, $begin, $length, $assign, $cmd, $value, $expr, $after);
     
@@ -2889,6 +2948,10 @@ sub recurse {
             $substmt->recurse($depth);
         }
         elsif ($r =~ /Stmt::Simple/i) {
+            #$substmt->recurse($depth + 1);
+            $substmt->recurse($depth);
+        }
+        elsif ($r =~ /Stmt::Say/i) {
             #$substmt->recurse($depth + 1);
             $substmt->recurse($depth);
         }
@@ -3130,6 +3193,76 @@ sub recurse {
 
 1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
 
+##############################  STMT::SAY  CLASS  ##############################
+
+package Stmt::Say;
+use strict;
+
+require Exporter;
+use Data::Dumper;
+
+use constant { TRUE => "1", FALSE => "" };
+
+our @ISA = qw/Exporter Stmt/;
+
+sub recurse {
+    my $self = shift;
+    my $depth = shift;
+    my $indent = " " x (4 * $depth);
+    
+    my @items = @{$self->{"_items"}};
+    my $cmd = $self->{"_cmd"};
+    
+    my ($i, $r, $t);
+    
+    printf "${indent}\\ %d This is Stmt::Say::recurse.\n", __LINE__;
+
+    #print "~" x 70, "\n";
+    #print Dumper $self;
+    #print "~" x 70, "\n";
+
+    for ($i = 0; $i < @items; ++$i) {
+        #if ($i == @items - 1) {
+        #    printf "${indent}\\ Last one; command is '%s'\n", $cmd;;
+        #};
+        $r = ref $items[$i];
+        printf "${indent}\\ item %d of %d: '%s'\n", $i, scalar (@items), ($r || "plain string");
+        if ($r) {
+            #printf "${indent}\\ numeric expression\n";
+            $items[$i]->recurse($depth);
+            printf "${indent}JSR real_disp_dec\n";
+            if ($i == @items - 1) {
+                if ($cmd =~ /m/i) {
+                    printf "${indent}\\ SAYMORE\n";
+                }
+                else {
+                    printf "${indent}JSR osnewl \\ Last one\n";
+                };
+            };
+        }
+        else {
+            #printf "${indent}\\ literal string\n";
+            printf "${indent}JSR say\n";
+            printf "${indent}EQUS \"%s\"\n", $items[$i];
+            if ($i == @items - 1) {
+                if ($cmd =~ /m/i) {
+                    printf "${indent}BRK \\ SAYMORE adds no newline\n";
+                }
+                else {
+                    printf "${indent}EQUB 13 \\ add newline on last one\n";
+                };
+            }
+            else {
+                printf "${indent}BRK\n";
+            };
+        };
+    };
+    
+    return $self;
+};
+
+1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
 ################################# MAIN PROGRAM #################################
 
 package main;
@@ -3203,6 +3336,12 @@ if (@ARGV) {
 
 my $after;
 
+my $prog = <<"_STOP_";
+IF VERB IS 39 THEN
+    SAY "You have scored " 5 * C13 " points out of a possible " C14 "."
+FI
+_STOP_
+
 #my $prog = <<"_STOP_";
 #C4 := 3
 #INCREASE C4 6
@@ -3215,20 +3354,20 @@ my $after;
 #SHOW_DESC := 1
 #_STOP_
 
-my $prog = <<"_STOP_";
-IF VERB GE 1 AND VERB LT 12 AND ( DEST IS 2 OR _ IS 4 OR _ IS 9 OR _ IS 11 ) THEN
-    IF ISSET 5 THEN
-        IF UNVISITED DEST THEN
-            MESSAGE 56
-            NEWLINE
-        FI
-    ELSE
-        MESSAGE 68
-        ROOM := EXIT 11
-        SHOW_DESC := 1
-    FI
-FI
-_STOP_
+# my $prog = <<"_STOP_";
+# IF VERB GE 1 AND VERB LT 12 AND ( DEST IS 2 OR _ IS 4 OR _ IS 9 OR _ IS 11 ) THEN
+#     IF ISSET 5 THEN
+#         IF UNVISITED DEST THEN
+#             MESSAGE 56
+#             NEWLINE
+#         FI
+#     ELSE
+#         MESSAGE 68
+#         ROOM := EXIT 11
+#         SHOW_DESC := 1
+#     FI
+# FI
+# _STOP_
 
 # my $prog = <<"_STOP_";
 # IF ISSET 5 THEN
