@@ -341,9 +341,31 @@ and its own `THEN` clause possibly executed; if there are no more `ELIF`s
 then the statements between `ELSE` and `FI` are executed.  In any case,
 execution proceeds after `FI`.
 
-A chain of **OR**s is evaluated only as far as the first TRUE result, and
-a chain of **AND**s is evaluated only as far as the first FALSE result;
-at this point, 
+## REPEAT STATEMENT
+
+The `REPEAT` statement looks like this:
+
+```
+REPEAT
+    statements
+    more statements
+UNTIL test
+```
+
+The statements between `REPEAT` and `UNTIL` are executed at least once.  At the
+end of the loop, the `UNTIL` test is evaluated as a Boolean expression and if it
+is FALSE, the statements are executed again.  If it is TRUE, execution proceeds
+from the line following `UNTIL`.
+
+**Be very careful not to create infinite loops!**  No warning will be given if
+you create a loop with a test that will never satisfy and can only be terminated
+by pressing `BREAK` to reset the processor.  Alan Turing proved that excepting
+trivial cases, it is mathematically impossible for a compiler to know whether
+or not a loop will terminate, so this is not just laziness on the author's part.
+(I could have checked for variables referred to in the `test` being altered in
+the `statements` that make up the body of the loop, but even this probably
+would be wrong as often as it was right.)
+
 
 ## BOOLEAN EXPRESSIONS
 
@@ -357,6 +379,10 @@ A list of terms separated by OR is evaluated only as far as the first TRUE
 test  (at which point we know the answer is TRUE).  A list of terms separated
 by AND is evaluated only as far as the first FALSE test  (at which point we
 know the answer to be FALSE).
+
+A chain of **OR**s is evaluated only as far as the first TRUE result, and
+a chain of **AND**s is evaluated only as far as the first FALSE result; nothing
+else is evaluated.
 
 ## RELATIONS
 
@@ -508,49 +534,11 @@ This relation is TRUE if A and B have _no_ "1" bits in common.
 
 ## IMPLICIT RELATIONS
 
-### CARRY
+### CFLAG
 
 This is TRUE if the previous arithmetic operation resulted in a carry, or if
 the carry was deliberately set in a `PROC`.  Note that the carry flag is apt
-to change at any time, so use th658
-
-### SHOW num_expr
-
-Displays the given value as a decimal number between 0 and 255, and leaves
-
-the cursor on the same line ready for more text.
-
-_The compiler could use an option to gather up the text from any SAY
-statements and add it as messages in the SQLite database._
-
-### SHIFT
-
-Forces the next letter printed to be capitalised.
-
-### NEWLINE
-
-Starts a new line.
-
-### LIVE num_expr
-
-Sets the verb to `VB_LIVE` and the message to the given number.  Any
-error condition will be overridden when the command is actioned; the
-message is displayed and the player gets another turn.
-
-### DIE num_expr
-
-Sets the verb to `VB_DIE` and the message to the given number.  Any
-error condition will be overridden when the command is actioned; the
-message is displayed and the game is over.
-
-.........!.........!.........!.........!.........!.........!.........!.........!
-
-## MISCELLANEOUS
-
-_The compiler could use an option to gather up the text from any SAY
-statements and add it as messages in the SQLite database._
-
-### DONE
+to change at any time, so use th
 set or clear it immediately before an `ENDPROC`.
 
 Remember also that `INCREASE` does not affect the carry flag; you will need
@@ -566,18 +554,21 @@ FI
 ```
 to increase a multi-byte value.
 
-### NOCARRY
+### NCFLAG
 
 This is TRUE if the previous arithmetic operation resulted in a carry, or if
 the carry was deliberately cleared in a `PROC`.
 
-### OVERFLOW
+### VFLAG
 
 This is TRUE if the previous arithmetic operation resulted in a false change
 of sign due to a result falling in the ranges 128..255 or -255..-129, or if
-the overflow flag was deliberately set.
+the overflow flag was deliberately set.  (The 6502 does not have an `SEV`
+instruction, but `BIT` imports bit 6 of the contents of the supplied address
+into V and bit 7 into N, so this functionality is emulated by performing a
+`BIT` operation on an address known to have bit 6 set.)
 
-### NOOVERFLOW
+### NVFLAG
 
 This is TRUE if the previous arithmetic operation produced a result in the
 range -128..127, with the sign bit correct, or if the overflow flag was
@@ -1269,9 +1260,11 @@ Not only do we have to interrupt the additions to perform the multiplication,
 but we have to interrupt the multiplication to subtract D from C. 
 
 
-The first GET of an expression does not affect the stack.  Subsequent GETs
+The first GET of an expression never affects the stack.  Subsequent GETs
 into the accumulator push the accumulator onto the calculation stack before
-getting the new value.
+getting the new value.  Where we are GETting a simple value  (literally, or
+from a fixed address)  as a second operand, we can GET into the X register
+instead and avoid a stack push.
 
 An expression such as
 ```
