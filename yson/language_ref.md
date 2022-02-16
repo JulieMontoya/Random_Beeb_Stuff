@@ -1145,6 +1145,34 @@ description of the object.  After we have been around the loop for the last
 time, if `bagempty` is still set then we display a message that there is
 nothing in the bag.
 
+## ADJECTIVES
+
+```
+TABLE colours BYTE
+  90  91  92  93  94  95  96  97
+ELBAT
+
+TABLE disc BYTE
+  36  37  38  39  40  41  42  43
+ELBAT
+
+IF NOUN IS N_disc THEN
+    IF MODR IS NOUN THEN
+        FOR try_disc := 0 ASC disc
+            IF LOCOF try_disc IS ROOM THEN
+                NOUN := try_disc
+                LAST
+            FI
+        NEXT
+    ELIF _ GE 90 THEN
+        IF POZ INDEX colours MODR THEN
+            NOUN := disc _
+        FI
+    FI
+FI
+
+```
+
 # ARCHITECTURE
 
 .........!.........!.........!.........!.........!.........!.........!.........!
