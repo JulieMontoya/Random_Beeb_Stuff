@@ -475,6 +475,10 @@ A GE B
 This relation is TRUE if the value of A is greater than or equal to the value
 of B.
 
+After any of these tests, the special variable `_` will contain **A** -- the
+value that was on the left-hand side of the comparison -- in either the `THEN`
+clause if this is executed, or the next test otherwise.
+
 .........!.........!.........!.........!.........!.........!.........!.........!
 
 ### GT : Greater Than
@@ -486,7 +490,7 @@ A GT B
 This relation is TRUE if the value of A is strictly greater than the value of
 B.  (Actually, if the value of B is strictly smaller than the value of A, due
 to the 6502's internal architecture -- there is no test for strictly greater,
-so it tests `B LT A`.)
+so it tests `B LT A`.  After this test, `_` will contain the value of **B**.)
 
 ### LE : Less Than or Equal To
 
@@ -495,7 +499,7 @@ A LE B
 ```
 
 This relation is TRUE if the value of A is smaller than or equal to the value
-of B. (But see above.)
+of B. (But see above.  After this test, `_` will contain the value of **B**.)
 
 ### MULTOF : Multiple Of
 
@@ -871,6 +875,23 @@ in the given table.  If an AFTER clause is specified, the search starts from
 that index in the table.  If the expression is not found in the table, 255 will
 be returned.
 
+This means you can usefully perform a test such as
+```
+IF POZ INDEX table_name num_expr THEN
+    REM NOW _ CONTAINS INDEX OF EXPRESSION IN TABLE
+ELSE
+    REM EXPRESSION WAS NOT IN TABLE
+FI
+```
+and do something based on the index if the number was found in the table  (which
+will now be present in the special variable `_`), or do something different if
+it was not found.  If the table has 128 or more entries, you will need to use
+```
+IF INDEX table_name num_expr ISNT 255 THEN
+```
+which will still leave the index in `_`, as it was on the left hand side of the
+last comparison performed.
+
 ### COUNT table_name num_expr [ AFTER num_expr ]
 
 This returns the number of times a given numeric expression occurs within the
@@ -1147,6 +1168,40 @@ nothing in the bag.
 
 ## ADJECTIVES
 
+Sometimes in a game there will be objects which must be distinguished using
+an adjective as well as a noun.  In this case, a three-word command must be
+given, such as `PRESS RED BUTTON` or `TAKE 13MM SPANNER`.  AdveBuilder refers
+to these as the **verb**, **modifier** and **noun**.
+
+Modifier words are contained in the same dictionary as noun words.  If you
+have few instances of two-word objects, you probably can get away with using
+the modifier dictionary numbers for the objects and a special value for the
+noun corresponding to a phantom object; if this is detected, set the noun to
+the modifier. Then `PRESS RED` will implicitly work as a shorthand for
+`PRESS RED BUTTON`, but `PRESS BUTTON` will give an error that the object is
+not available.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+Suppose you have in your game a black disc, a red disc, a green disc, a yellow
+disc, a blue disc, a magenta disc, a cyan disc and a white disc.  Obviously
+each one is a separate object with its own ID number:
+
+id | desc_carried   | desc_in_room
+---|----------------|------------------------------
+36 | a black disc   | there is a black disc here
+37 | a red disc     | there is a red disc here
+38 | a green disc   | there is a green disc here
+39 | a yellow disc  | there is a yellow disc here
+40 | a blue disc    | there is a blue disc here
+41 | a magenta disc | there is a magenta disc here
+41 | a cyan disc    | there is a cyan disc here
+43 | a white disc   | there is a white disc here
+
+You want a command such as TAKE DISC automatically to select the nearest disc
+if one is present, but you also want to be able to specify a disc explicitly
+with an adjective in a command such as `TAKE MAGENTA DISC`.
+
 ```
 TABLE colours BYTE
   90  91  92  93  94  95  96  97
@@ -1158,8 +1213,10 @@ ELBAT
 
 IF NOUN IS N_disc THEN
     IF MODR IS NOUN THEN
-        FOR try_disc := 0 ASC disc
-            IF LOCOF try_disc IS ROOM THEN
+        FOR 0 ASC disc
+            try_disc := _
+            IF VERB ISNT VB_DROP AND LOCOF try_disc IS ROOM
+            OR VERB ISNT VB_TAKE AND LOCOF try_disc IS 0 THEN
                 NOUN := try_disc
                 LAST
             FI
@@ -1172,6 +1229,50 @@ IF NOUN IS N_disc THEN
 FI
 
 ```
+
+The table `colours` contains the dictionary numbers for the names of the
+colours of the discs: BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN and
+WHITE respectively, in the nouns and modifiers dictionary.  (These should
+be out of the range of object IDs.)
+
+noun    | nn
+--------|----------
+BLACK   | 90
+RED     | 91
+GREEN   | 92
+YELLOW  | 93
+BLUE    | 94
+MAGENTA | 95
+CYAN    | 96
+WHITE   | 97
+
+The table `disc` contains the object IDs for the black, red, green, yellow,
+blue, magenta, cyan and white discs respectively.
+
+The constant N_disc refers to the dictionary number for DISC.  This can
+usefully be mapped onto an object which is only ever used as a surrogate for
+a stateful object, and therefore will never be available for a command;
+or you could create a new stock message
+
+If the noun is `DISC` and there is no modifier  (i.e. the modifier and noun
+are the same word),  then we try to match the nearest disc, either in the
+room  (unless the verb is `DROP`)  or in hand  (unless the verb is `TAKE`)
+by stepping through the disc objects in turn.  If one of the discs is
+matched, we change the value of `NOUN` accordingly and exit the loop.
+
+If the noun is `DISC` and there is a modifier, then we use `INDEX` to see if
+it matches any of the disc colours.  If no match is found, this will return
+255 and the POZ test will fail accordingly.  But if a match is found, then
+`INDEX` will have returned a number between 0 and the size of `colours` - 1;
+and as the last accumulator contents, this value whose sign we were testing
+will be available in `_`.  This is also the correct index in the table `disc`
+for the value to which `NOUN` must be changed.
+
+In any case, if a disc was matched then `NOUN` will be set correctly; if no
+disc was matched, `NOUN` will still contain the value corresponding to `DISC`
+and can be dealt with accordingly; the most proper way would be to create a
+new stock message such as "You'll have to be more specific than that!" and
+set `ERROR` accordingly.
 
 # ARCHITECTURE
 
