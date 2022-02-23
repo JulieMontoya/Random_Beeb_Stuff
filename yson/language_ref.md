@@ -789,6 +789,9 @@ The `LASTIF` statement provides a way to exit the loop prematurely, with
 execution resuming after the `NEXT` as though the loop had completed if
 the Boolean expression is TRUE.
 
+If either `num_expr` is the name of a table, it will be read as the last valid
+index within that table.
+
 ## FOREACH LOOP
 
 The `FOREACH` loop has the following syntax:
@@ -864,8 +867,6 @@ expression.  (The table must be of type NYBBLE or BYTE.)
 This is TRUE if a value is _not_ found in the table which matches the given
 numeric expression.  (The table must be of type NYBBLE or BYTE.)
 
-### LAST table_name
-
 This returns the index of the last entry in the named table.
 
 ### INDEX table_name num_expr [ AFTER num_expr ]
@@ -902,7 +903,7 @@ that index in the table.
 
 This iterates over the entries in a table, at the expense of losing access to
 the indices   (if you need the indices, you can always use the construction
-`FOR 0 ASC LAST table_name` instead of `FOREACH`).
+`FOR 0 ASC table_name` instead of `FOREACH`).
 
 If the table is of type NYBBLE or BYTE, each _value_ is placed in turn in the
 special variable `_`.  `UNSET` makes no difference.
@@ -911,7 +912,6 @@ If the table is of type BIT, each _index_ is placed in turn in the special
 variable `_`, but only if the bit in the table is set  (or only if the bit is
 _un_set, if `UNSET` is specified).  Indices of bits not in the desired state
 are skipped.
-
 
 The below code is an example to implement a scoring scheme where points are
 awarded for collecting treasures and completing tasks.
@@ -962,29 +962,27 @@ IF VERB IS VB_SCORE THEN
     score := 0
     max_sc := 0
     FOREACH TREASURE
+        treasure := _
         max_sc := max_sc + 10
-        IF LOCOF _ IS RM_vault THEN
+        IF LOCOF treasure IS RM_vault THEN
             score := score + 10
-        ELIF CARRYING _ THEN
+        REM here _ = LHS of last comparison = location of treasure
+        ELIF ZERO _ THEN
             score := score + 5
-        ELIF LOCOF _ ISNT STARTROOM _ THEN
+        ELIF _ ISNT STARTROOM treasure THEN
             score := score + 1
         FI
     NEXT
-    FOR 0 ASC LAST TASK
+    FOR 0 ASC TASK
+        task :=_
         st_bit := TASK _
-        pts = 5 * POINTS _
+        pts = 5 * POINTS task
         max_sc := max_sc + pts
         IF ISSET st_bit THEN
             score := score + pts
         FI
     NEXT
-    SAY "You have scored "
-    SHOW score
-    SAY " out of a possible "
-    SHOW max_sc
-    SAY "."
-    NEWLINE
+    SAY "You have scored " score " out of a possible " max_sc "."
 FI
 ```
 
