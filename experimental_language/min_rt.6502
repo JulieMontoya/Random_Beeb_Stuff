@@ -40,6 +40,9 @@ ORG &7100
     JMP real_conv_str_stk
 .parse_num_stk
     JMP real_parse_num_stk
+.dup
+    JMP real_dup
+
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
@@ -115,7 +118,20 @@ ORG &7100
     LDA calc_stk,Y
     INY
     RTS
-
+    
+.real_dup
+    LDY calc_sp
+    JSR _dup2
+    STY calc_sp
+    RTS
+._dup2
+    JSR _dup1
+._dup1
+    LDA calc_stk,Y
+    STA calc_stk-2,Y
+    DEY
+    RTS
+    
 \  GET LEFT AND RIGHT OPERANDS FROM STACK
 
 .get_both
