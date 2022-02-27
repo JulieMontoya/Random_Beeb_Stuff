@@ -145,3 +145,16 @@ right-hand operand.
 This needs making negative-number-friendly.
 
 
+# ZERO PAGE WORKSPACE
+
+Location | Name       | Meaning
+--------:|------------|-------------------------------------------------
+&70-&71  | lh_operand | Left-hand operand / result
+&72-&73  | remainder  | Preload / remainder /result extension
+&74-&75  | rh_operand | Right-hand operand
+&7E      | calc_sp    | Calculation stack pointer
+&7F      | neg_flag   | Negative flag
+&80-&81  | code_ptr   | Pointer to instruction being executed
+&82-&83  | str_ptr    | String pointer
+&84-&85  | loop_ptr   | Pointer to FOR / REPEAT structure in loop stack
+

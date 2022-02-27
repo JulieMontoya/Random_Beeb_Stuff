@@ -19,7 +19,7 @@ neg_flag = &7F
 
 code_ptr = &80
 str_ptr = &82
-for_prt = &84
+for_ptr = &84
 
 osasci = &FFE3
 
@@ -34,15 +34,18 @@ ORG &7100
     JMP real_pushAX
 .mult_stk
     JMP real_mult_stk
+.div_stk
+    JMP real_div_stk
 .twc16
     JMP real_twc16
-.conv_str_stk
-    JMP real_conv_str_stk
 .parse_num_stk
     JMP real_parse_num_stk
 .dup
     JMP real_dup
-
+.ext_signed_divide
+    JMP signed_divide
+.conv_str_stk
+    JMP real_conv_str_stk
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
@@ -135,24 +138,77 @@ ORG &7100
 \  GET LEFT AND RIGHT OPERANDS FROM STACK
 
 .get_both
-    LDX #rh_operand
-    JSR pull16
+    JSR get_rho
 .get_lho
     LDX #lh_operand
+    JMP pull16
+.get_rho
+    LDX #rh_operand
     JMP pull16
 
 \  MULTIPLY TWO NUMBERS AT TOP OF STACK
     
 .real_mult_stk
-    \LDX #multiplicand
-    \JSR pull16
-    \LDX #multiplier
-    \JSR pull16
     JSR get_both
     JSR real_mult16
+.return_stk
     LDX #product
     JMP push16
 
+\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
+\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
+    
+.real_div_stk
+    JSR get_both
+    JSR signed_divide
+    \LDX #product
+    \JMP push16
+    JMP return_stk
+
+.real_mod_stk
+    JSR get_both
+    JSR signed_divide
+.return_ext
+    LDX #product+2      \  return remainder
+    JMP push16
+
+\  ADD TWO NUMBERS AT TOP OF STACK
+
+.add16_stk
+    CLC
+.adc16_stk
+    JSR get_both
+    LDX #0
+    JSR _adc_2
+    JMP return_stk
+._adc_2
+    JSR _adc_1
+._adc_1
+    LDA lh_operand,X
+    ADC rh_operand,X
+    STA lh_operand,X
+    INX
+    RTS
+    
+\  SUBTRACT NUMBER AT TOP OF CALCULATION STACK FROM NUMBER BELOW IT
+\  RETURN DIFFERENCE ON TOP OF CALCULATION STACK
+
+.sub16_stk
+    SEC
+.sbc16_stk
+    JSR get_both
+    LDX #0
+    JSR _sbc_2
+    JMP return_stk
+._sbc_2
+    JSR _sbc_1
+._sbc_1
+    LDA lh_operand,X
+    SBC rh_operand,X
+    STA lh_operand,X
+    INX
+    RTS
+    
 \  DISPLAY A DECIMAL NUMBER FROM TOP OF STACK
 
 .real_disp_dec_stk
@@ -278,7 +334,7 @@ ORG &7100
     
     RTS
 
-\  STORE A WORD IN MEMORY
+\  STORE A WORD IN MEMORY -- ! OPERATOR / VARIABLE ASSIGNMENT
 
 .store_word
    JSR get_both
@@ -290,6 +346,23 @@ ORG &7100
    STA (rh_operand),Y
    RTS
     
+\  READ A WORD FROM MEMORY -- ! OPERATOR (RHS)
+
+.read_word
+    JSR get_rho
+    LDY #0
+    LDX calc_sp
+    JSR _rw2
+    STX calc_sp
+    RTS
+._rw2
+    JSR _rw1
+._rw1
+    LDA (rh_operand),Y
+    INY
+    DEX
+    STA calc_stk,X
+    RTS
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
@@ -402,8 +475,8 @@ ORG &7100
     LDA #0
     STA remainder
     STA remainder+1
-    TXA                 \  save X and Y on 6502 stack
 .signed_div_ext
+    TXA                 \  save X and Y on 6502 stack
     PHA
     TYA
     PHA
