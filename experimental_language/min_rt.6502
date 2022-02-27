@@ -1,0 +1,391 @@
+product=&70
+multiplicand=&74
+multiplier=&70
+preload=&72
+dividend=&70
+divisor=&74
+quotient=&70
+remainder=&72
+
+lh_operand = &70
+rh_operand = &74
+
+calc_stk = &7000
+calc_sp = &7E
+scratch_X = &7F
+neg_flag = &7F
+
+\  POINTERS ARE IN &80 - &8F
+
+code_ptr = &80
+str_ptr = &82
+for_prt = &84
+
+osasci = &FFE3
+
+CLEAR &6F00,&7100
+ORG &7100
+
+.init_calc_stk
+    JMP real_init_calc_stk
+.disp_dec_stk
+    JMP real_disp_dec_stk
+.pushAX
+    JMP real_pushAX
+.mult_stk
+    JMP real_mult_stk
+.twc16
+    JMP real_twc16
+.conv_str_stk
+    JMP real_conv_str_stk
+.parse_num_stk
+    JMP real_parse_num_stk
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  INITIALISE CALCULATION STACK
+
+.real_init_calc_stk
+    LDA #&FC
+    STA calc_sp
+._rts
+    RTS
+
+\  PUSH ACCUMULATOR ONTO CALCULATION STACK
+
+.real_pushA
+    DEC calc_sp         \  decrease calc stack pointer
+    LDY calc_sp
+    STA calc_stk,Y      \  store at top of stack
+    RTS
+
+\  PUSH A 16-BIT VALUE FROM A (LO) AND X (HI) ONTO THE CALCULATION STACK
+\  ON ENTRY, X => LOCATION OF DATA IN ZP
+
+.real_pushAX
+    LDY calc_sp
+    JSR _push_core
+    TXA
+    JSR _push_core
+    STY calc_sp
+    RTS
+    
+\  PUSH A 16-BIT VALUE FROM ZERO PAGE ONTO THE CALCULATION STACK
+\  ON ENTRY, X => LOCATION OF DATA IN ZP
+
+.push16
+    LDY calc_sp
+    JSR _push16_2
+    STY calc_sp
+    RTS
+._push16_2
+    JSR _push16_1
+._push16_1
+    LDA 0,X
+    INX
+._push_core
+    DEY
+    STA calc_stk,Y
+    RTS
+    
+\  PULL ACCUMULATOR FROM CALCULATION STACK
+
+.real_pullA
+    LDY calc_sp
+    LDA calc_stk,Y      \  retrieve from top of stack
+    INC calc_stk        \  increase calc stack pointer
+    RTS
+
+\  PULL A 16-BIT VALUE FROM THE CALCULATION STACK AND STORE IN ZERO PAGE
+\  ON ENTRY, X => LOCATION IN ZP FOR DATA
+
+.pull16
+    LDY calc_sp
+    JSR _pull16_2
+    STY calc_sp
+    RTS
+._pull16_2
+    JSR _pull16_1
+._pull16_1
+    JSR _pull_core
+    STA 1,X
+    DEX
+    RTS
+._pull_core
+    LDA calc_stk,Y
+    INY
+    RTS
+
+\  GET LEFT AND RIGHT OPERANDS FROM STACK
+
+.get_both
+    LDX #rh_operand
+    JSR pull16
+.get_lho
+    LDX #lh_operand
+    JMP pull16
+
+\  MULTIPLY TWO NUMBERS AT TOP OF STACK
+    
+.real_mult_stk
+    \LDX #multiplicand
+    \JSR pull16
+    \LDX #multiplier
+    \JSR pull16
+    JSR get_both
+    JSR real_mult16
+    LDX #product
+    JMP push16
+
+\  DISPLAY A DECIMAL NUMBER FROM TOP OF STACK
+
+.real_disp_dec_stk
+    JSR decode_dec_stk
+._dds3
+    LDA neg_flag
+    BPL _dds4
+    LDA #45
+    JSR osasci
+._dds4
+    LDA calc_stk-1,X
+    JSR osasci
+    DEX
+    BNE _dds4
+    RTS
+    
+\  STORE STRING REPRESENTATION OF A NUMBER IN MEMORY
+
+.real_conv_str_stk
+    LDX #str_ptr        \  destination to store string
+    JSR pull16
+    JSR decode_dec_stk
+    LDY #0
+    LDA neg_flag
+    BPL _cvs2
+    LDA #45
+    STA (str_ptr),Y
+    INY
+._cvs2
+    LDA calc_stk-1,X
+    STA (str_ptr),Y
+    INY
+    DEX
+    BNE _cvs2
+    LDA #13             \  final character is CR
+    STA (str_ptr),Y
+    RTS
+    
+    RTS
+
+.decode_dec_stk
+    LDY calc_sp
+    LDA calc_stk,Y
+    STA neg_flag
+    BPL _dds_pos
+    JSR real_twc16
+    LDA #128
+._dds_pos
+    \  We are going to divide the top of the stack ...
+    LDX #dividend
+    JSR pull16
+    \  ... by 10
+    LDA #10
+    JSR set_divisor
+    TAX                 \  we know A=0 here
+._dds1
+    JSR real_div16
+    \  Store the digit's ASCII code in scratch space
+    LDA remainder
+    CLC
+    ADC #48
+    STA calc_stk,X
+    INX
+    \  See if working total has reached zero
+    LDA dividend
+    ORA dividend+1
+    BNE _dds1
+._dds_end
+    RTS
+
+\  PARSE A NUMBER AND PLACE IT ON THE STACK
+
+.real_parse_num_stk
+    LDX #str_ptr        \  set up string pointer
+    JSR pull16
+.parse_num_at_ptr
+    LDA #10
+    JSR set_multiplicand
+    STA neg_flag        \  here we know A=0
+    TAX
+._pn0
+    STA product,X
+    INX
+    CPX #4
+    BCC _pn0
+    TAY
+._pn1
+    LDA (str_ptr),Y
+    CMP #32
+    BEQ _pn_space
+    BCC _pn_notdigit
+    CMP #45
+    BEQ _pn_minus
+    CMP #58
+    BCS _pn_notdigit
+    CMP #48
+    BCC _pn_notdigit
+    SEC
+    SBC #48
+    STA product+2       \  store it in the preload register
+    LDA #0
+    STA product+3
+    JSR mult16_preload  \  multiply total by 10 and add new digit
+._pn_space
+    INY
+    BNE _pn1
+._pn_notdigit
+    LDX #product
+    JSR push16
+    LDA neg_flag
+    BPL _pn_pos
+    JSR real_twc16
+._pn_pos
+    RTS
+._pn_minus
+    LDA #255
+    STA neg_flag
+    BNE _pn_space       \  always branches
+    
+    RTS
+
+\  STORE A WORD IN MEMORY
+
+.store_word
+   JSR get_both
+   LDY #0
+   LDA lh_operand
+   STA (rh_operand),Y
+   INY
+   LDA lh_operand+1
+   STA (rh_operand),Y
+   RTS
+    
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MONADIC OPERATIONS
+\
+\  TWOS-COMPLEMENT THE TOP OF THE STACK
+\
+
+.real_twc16
+    LDY calc_sp
+    SEC                 \  so as to add 1 when we flip the bits
+    LDA #0
+    SBC calc_stk+1,Y
+    STA calc_stk+1,Y
+    LDA #0
+    SBC calc_stk,Y
+    STA calc_stk,Y
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+.mult16
+.real_mult16
+    LDA #0
+    STA product+3
+    STA product+2
+.mult16_preload
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    \  Begin by shifting the multiplier right so its lowest bit is already
+    \  in the carry flag.
+    LDY #17             \  one more than we need
+    BNE _mult16_3       \  always branches; A = 0
+._mult16_1
+    BCC _mult16_2
+    \  Add the multiplicand to the high word of the product
+    CLC
+    LDA product+2
+    ADC multiplicand
+    STA product+2
+    LDA product+3
+    ADC multiplicand+1
+    STA product+3
+    \  Shift the product right
+._mult16_2
+    ROR product+3
+    ROR product+2
+._mult16_3
+    ROR product+1
+    ROR product
+    \  See if we need to go around again
+    DEY
+    BNE _mult16_1
+    
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  This is the same bit of code with 2 different names
+
+.set_divisor
+.set_multiplicand
+    STA multiplicand
+    LDA #0
+    STA multiplicand+1
+    RTS
+    
+\  DIVIDE ONE 16-BIT NUMBER BY ANOTHER
+    
+.real_div16
+.divide_no_rem
+    LDA #0
+    STA remainder
+    STA remainder+1
+.divide
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    LDY#17              \  one more than we need
+    BNE _divide_3       \  do an extra left shift on just bottom bits
+._divide_1
+    ROL dividend+2
+    ROL dividend+3
+._divide_2
+    SEC
+    LDA dividend+2
+    SBC divisor
+    TAX \ stash low byte in X in case we need it
+    LDA dividend+3
+    SBC divisor+1
+    BCC _divide_3
+    \ update dividend if we had room to subtract
+    STX dividend+2
+    STA dividend+3
+._divide_3
+    ROL dividend      \ C shifts into divd
+    ROL dividend+1
+    DEY
+    BNE _divide_1
+    \  dividend, dividend+1 now contain quotient
+    \  dividend+2, dividend+3 contain remainder
+    
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+._code_end
+
+SAVE "M.CODE", calc_stk, _code_end, _rts
+
+PRINT "init_calc_stk =", ~init_calc_stk
