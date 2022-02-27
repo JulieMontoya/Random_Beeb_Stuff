@@ -8,48 +8,61 @@ my $Y_DIRTY = TRUE;
 
 ################################################################################
 #
-#  Nested Boolean lists have not been working quite right and may need to be
-#  ripped up and started again from scratch.
+#  Broken again ..... :(
 #
-#  Have made logic table with expected behaviour in all possible cases and
-#  begun working through it.
+#  Adding bracketed expressions as a new global object so as to obviate the
+#  need for every expression to have a reference to its parent statement,
+#  which sounds messier than anything global.
 #
-#  OR lists inside AND lists seem to work fine.
-#  AND lists inside OR lists seem fixed now.
 #
-#  Still to test:
-#  AND list inside AND list
-#  OR list inside OR list
+#  Sort of working for numeric expressions; but have *not* yet removed all
+#  references to the old code, so it could go very badly wrong!
+#  Not expecting it to handle expressions across multiple statements well.
 #
-#  This is working now with a statement having substatements and when we
-#  parse it, we keep appending stuff to its substatements until we run
-#  out of stuff to parse.
+#  Fixed now :) Can correctly mix bracketed numeric and Boolean expressions
+#  as in IF (ISSET 10 OR ISSET 11) AND ROOM ISNT (trapped_turns * 2) THEN
+#  where (ISSET 10 OR ISSET 11) is a Boolean term but (trapped_turns * 2)
+#  is numeric.
 #
-#  Now my substatements need really need classes of their own .....
+#  Got rid of some old code, may be more lurking .....
 #
-#  Sub-statements get re-blessed into a subclass with its own special
-#  ->recurse method.
-#  Each subclass has its own special ->recurse() method to suit the unique
-#  properties of its sub-statement type.
-
+#  Enough of the language is there to play Birthday Adventure.
+#
+#
+#  Still to do tables.
+#
+#
+#  It only works!  A bit, anyway.
+#
+#  Nested Boolean lists now seem to work correctly.  The proof of the pudding
+#  will be in the eating.
+#
+#  Nested IFs now seem to work --except-- still gives false positives on
+#  if or fi within speech marks in SAY statements.
+#  (workaround pro tem is to fix it in the .6502 file)
+#
+#  Really just needs extra statements and functions adding until it meets
+#  the spec at least well enough to build "Birthday Adventure".
+#
+#
+#
+#  SYNTACTIC SUGAR:
+#  The name of a state bit on its own should be treated as ISSET
+#  (honouring un-)
+#
 #  Working on TABLEs
 #  Currently: store table of BYTEs
-
-#  Now have NumLit and NumVar classes for values which are specified as
-#  literal values, symbolic constants and variables.
 
 my $OUTPUT_WIDTH = 76;
 
 my $GETS = 0;
 my $STACK_DEPTH = 0;
 
-my ($KNOWN_VARS);
-
 my %KNOWN_VARS = ( "ROOM"  => "bas_var_R",
                    "VERB"  => "bas_var_V",
                    "MOD"   => "bas_var_M",
                    "NOUN"  => "bas_var_N",
-                   "ERR"   => "bas_var_E",
+                   "ERROR" => "bas_var_E",
                    "LIGHT" => "bas_var_L",
                    "DEST"  => "bas_var_D",
                    "NORTH" => "exits",
@@ -79,16 +92,39 @@ my %STATE_BIT = ( "umbrella_open" => 1,
                   "coin_found" => 6,
                   "coin_inserted" => 7,
                   "light_lit" => 9,
-                  "hen_fed" => 11);
+                  "hen_fed" => 11,
+                  "heard_future" => 12,
+                  "time_vortex" => 13 );
 
+my %STATE_BYTE = ( "trapped_turns" => 3 );
+
+my (@ENTRY_PTS, %ENTRY_PTS);
+
+my $KNOWN_VARS;
 my $sep = "";
 foreach (keys %KNOWN_VARS) {
     $KNOWN_VARS .= $sep . $_;
     $sep = "|";
 };
 
-my $CONST = uc join "|", keys %CONST;
-my $STATE_BIT = join "|", keys %STATE_BIT;
+# my $STATE_BYTE;
+# $sep = "";
+# foreach (keys %STATE_BYTE) {
+#     $STATE_BYTE .= $sep . $_;
+#     $sep = "|";
+# };
+
+# my $CONST = uc join "|", keys %CONST;
+# my $STATE_BIT = join "|", keys %STATE_BIT;
+# my $STATE_BYTE = join "|", keys %STATE_BYTE;
+
+my $CONST;
+my $STATE_BIT;
+my $STATE_BYTE;
+
+# 
+my $BOLD = "\e[1;4m";
+my $PLAIN = "\e[m";
 
 ################################  NUMLIT CLASS  ################################
 
@@ -147,7 +183,14 @@ sub new {
         $value = $1;
         printf "Hex literal: '&%s'\n", uc $value;
         $self->{"_value"} = hex $value;
-        $self->{"_is_hex"} = hex $value;
+        $self->{"_is_hex"} = TRUE;
+    }
+    elsif ($expr =~ /^%([01]+)$/) {
+        $value = $1;
+        my $bits = substr "00000000$value", -8;
+        printf "Binary literal: '%%%s'\n", $value;
+        $self->{"_value"} = unpack "C", pack "B", $bits;
+        $self->{"_is_bin"} = TRUE;
     }
     else {
         return undef;
@@ -183,6 +226,11 @@ sub new {
         $name = $1;
         printf "Variable: '%s'\n", $name;
         $self->{"_value"} = $name;
+    }
+    elsif ($expr =~ /^($STATE_BYTE)$/i) {
+        $name = $1;
+        printf "State byte: '%s' => C%d\n", $name, $STATE_BYTE{$name};
+        $self->{"_value"} = sprintf "state_byte + %d", $STATE_BYTE{$name};
     }
     else {
         printf "Unknown variable: '%s'?\n", $expr;
@@ -242,24 +290,230 @@ sub regexp {
     return $regexp;
 };
 
+sub size {
+    my $self = shift;
+    my $size;
+    my $name;
+    if (ref $self) {    #  $t->size
+        $size = $self->{"_size"};
+    }
+    else {              #  Table->size
+        $name = shift;
+        $size = $tables{lc $name}->{"_size"};
+    };
+    $size;
+};
+
+sub data {
+    my $self = shift;
+    @{$self->{"_data"}};
+};
+
 sub recurse {
     my $self = shift;
     my $depth = shift;
     my $indent = " " x (4 * $depth);
     
     my ($i, $r, $t, $substmt, $varname, $expr, $cmd);
+    my ($bit, $bits, $line, $sep, $new, @alt_data, $high, $byte);
     my $name = $self->{"_name"};
     my $size = $self->{"_size"};
     my @data = @{$self->{"_data"}};
     
-    printf "${indent}\\ This is Table::Recurse, name '%s', size '%s'.\n", $name, $size;
-    printf "${indent}.tbl_%s\n", lc $name;
+    printf "${indent}\\ %d This is Table::Recurse, name '%s', size '%s'.\n", __LINE__, $name, $size;
+    printf "${indent}.tbl_%s  \\ %s (%d)\n", lc $name, $size, scalar @data;
+    
+    if ($size =~ /bit/i) {
+        printf "${indent}\\ Table is of size BIT.\n";
+    }
+    elsif ($size =~ /n[iy]b/i) {
+        #printf "${indent}\\ Table is of size NYBBLE.\n";
+        
+        #  First make a new table with the nybbles packed in bytes
+        $high = FALSE;
+        @alt_data = ();
+        foreach ($self->data) {
+            if ($high) {
+                $byte |= ($_ & 0x0f) << 4;
+                push @alt_data, $byte;
+                $high = FALSE;
+            }
+            else {
+                $byte = $_ & 0x0f;
+                $high = TRUE;
+            };
+        };
+        #  Deal with any hanging low nybble
+        if ($high) {
+            push @alt_data, $byte;
+        };
+  
+        #  Now process the bytes
+        
+        $line = $indent;
+        $sep = "";
+        foreach (@alt_data) {
+            $new = sprintf "EQUB &%02X", $_;
+            #  See if it overflows the current line
+            if (length($line) + length($new) + 1 > $OUTPUT_WIDTH) {
+                printf "%s\n", $line;
+                $line = "$indent$new";
+            }
+            else {
+                #printf "${indent}\\ '%s'\n", $new;
+                $line .= $sep . $new;
+                
+            };
+            $sep = ":";
+        };
+        #  If there is anything left, print it now
+        if ($line) {
+            printf "%s\n", $line;
+        };
+    }
+    else {
+        #printf "${indent}\\ Table is of size BYTE.\n";
+        $line = $indent;
+        $sep = "";
+        foreach (@data) {
+            $new = sprintf "EQUB &%02X", $_;
+            #  See if it overflows the current line
+            if (length($line) + length($new) + 1 > $OUTPUT_WIDTH) {
+                printf "%s\n", $line;
+                $line = "$indent$new";
+                $sep = ":";
+            }
+            else {
+                #printf "${indent}\\ '%s'\n", $new;
+                $line .= $sep . $new;
+                $sep = ":";
+            };
+        };
+        #  If there is anything left, print it now
+        if ($line) {
+            printf "%s\n", $line;
+        };
+    };
     
     return $self;
 };
 
 sub dump {
     print Dumper \%tables;
+};
+
+1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+###############################  BRACKET  CLASS  ###############################
+
+package Bracket;
+use strict;
+
+require Exporter;
+use Data::Dumper;
+
+use constant { TRUE => "1", FALSE => "" };
+
+our @ISA = qw/Exporter/;
+
+my @brackets;
+
+sub init {
+    my $proto = shift;                  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    my $class = ref($proto) || $proto;  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+    @brackets = ();
+    1;
+};
+
+sub new {
+    my $proto = shift;                  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    my $class = ref($proto) || $proto;  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+    my $expr = shift;
+
+    while ($expr =~ /^\s*\(.*?\)\s*$/s) {
+        printf "%d Stripping fore and aft brackets from '%s' .....\n", __LINE__, $expr;
+        $expr =~ s/^\s*\(//;
+        $expr =~ s/\)\s*$//;
+    };
+    $expr =~ s/^\s*|\s*$//g;
+    
+    my ($before, $bracket, $after, $i, $ob, $cb, @open_brkt);
+    my $run_out = FALSE;
+    
+    my $serial = @brackets;
+    my $self = { "_expr" => $expr,
+                 "_serial" => $serial };
+    bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    push @brackets, $self;
+    
+    while ($expr =~ /[()]/) {
+        printf "%d Expression '%s' contains brackets!\n", __LINE__, $expr;
+        @open_brkt = ();
+        for ($i = 0; $i < length $expr; ++$i) {
+            if (substr($expr, $i, 1) eq "(") {
+                printf "%d Opening bracket found at %d (%d)\n", __LINE__, $i, scalar @open_brkt;
+                push @open_brkt, $i;
+            }
+            elsif (substr($expr, $i, 1) eq ")") {
+                printf "%d Closing bracket found at %d (%d)\n", __LINE__, $i, scalar @open_brkt;
+                if (@open_brkt < 1) {
+                    die "Closing bracket without opening bracket";
+                }
+                elsif (@open_brkt == 1) {
+                    $cb = $i;
+                    $ob = pop @open_brkt;
+                    $before = substr $expr, 0, $ob;
+                    $bracket = substr $expr, $ob + 1, $cb - $ob - 1;
+                    $after = substr $expr, $cb + 1;
+                    printf "Before : '%s'\n", $before;
+                    printf "Bracket: '%s'\n", $bracket;
+                    printf "After  : '%s'\n", $after;
+                    
+                    my $new_brkt = new Bracket($bracket);
+                    $expr = $before . "BRKT" . $new_brkt->serial . $after;
+                    $expr =~ s/^\s*|\s*$//g;
+                    printf "Now    : '%s'\n", $expr;
+                    $self->{"_expr"} = $expr;
+                    last;
+                }
+                else {
+                    $ob = pop @open_brkt;
+                    printf "Goes with opening bracket at %d.\n", $ob;
+                };
+            };
+        };
+    };
+
+    return $self;
+};
+
+sub get {
+    #print ":" x 70, "\n";
+    #print Dumper @_;
+    #print ":" x 70, "\n";
+    
+    my $proto = shift;                  #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+    #  When called as Bracket->get($index) this 1st parameter contains "Bracket"
+    my $index = shift;
+    #  Strip away anything non-numeric
+    $index =~ s/\D//g;
+    return $brackets[$index];
+};
+
+sub serial {
+    my $self = shift;
+    $self->{"_serial"};
+};
+
+sub expr {
+    my $self = shift;
+    $self->{"_expr"};
+};
+
+sub dump {
+    print Dumper \@brackets;
 };
 
 1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
@@ -290,7 +544,19 @@ sub new {
         return $value;
     };
     
-    if ($value =~ /un/i) {
+    if ($value =~ /^($CONST)$/i) {
+        $name = $1;
+        $value = $CONST{$name};
+        printf "Constant: '%s' => '%d'\n", $name, $value;
+        $literal = TRUE;
+    }
+    elsif ($value =~ /^($STATE_BIT)$/i) {
+        $name = $1;
+        $value = $STATE_BIT{$name};
+        printf "State bit: '%s' => '%d'\n", $name, $value;
+        $literal = TRUE;
+    }
+    elsif ($value =~ /un/i) {
         my $inv_expr = $value;
         $inv_expr =~ s/un//gi;
         printf "'%s' contains 'un'; inverse is '%s'\n", $value, $inv_expr;
@@ -304,18 +570,6 @@ sub new {
             #die "Unknown inverted status bit '$value'";
         };
     }
-    elsif ($value =~ /^($STATE_BIT)$/i) {
-        $name = $1;
-        $value = $STATE_BIT{$name};
-        printf "State bit: '%s' => '%d'\n", $name, $value;
-        $literal = TRUE;
-    }
-    elsif ($value =~ /^($CONST)$/i) {
-        $name = $1;
-        $value = $CONST{$name};
-        printf "Constant: '%s' => '%d'\n", $name, $value;
-        $literal = TRUE;
-    }
     elsif ($value =~ /^([0-9]+)$/) {
         $value = $1;
         printf "Decimal literal: '%d'\n", $value;
@@ -326,6 +580,14 @@ sub new {
         printf "Hex literal: '&%s'\n", uc $value;
         $value = hex $value;
         #$self->{"_is_hex"} = hex $value;
+        $literal = TRUE;
+    }
+    elsif ($value =~ /^%([01]+)$/) {
+        $value = $1;
+        my $bits = substr "00000000$value", -8;
+        printf "%d Bits: '%s'\n", __LINE__, $bits;
+        $value = unpack "C", pack "B8", $bits;
+        printf "%d Binary literal: '%%%s' (=%d)\n", __LINE__, $bits, $value;
         $literal = TRUE;
     };
 
@@ -378,14 +640,23 @@ sub get {
     if ($value =~ /^($KNOWN_VARS)$/i) {
         printf "${indent}%s %s \\ --get-- variable\n", $inst, $KNOWN_VARS{$value};
     }
+    elsif ($value =~ /^($STATE_BYTE)$/i) {
+        my $offset = $STATE_BYTE{$value};
+        printf "${indent}%s state_bytes + %d \\ %d --get-- state byte\n", $inst, $offset, __LINE__;
+        #print "This is a state byte.\n";
+        #die "Stopping for investigation.";
+    }
     elsif ($value =~ /^[0-9]+$/) {
         printf "${indent}%s #%d \\ --get-- decimal literal\n", $inst, $value;
     }
     elsif ($value =~ /^&[0-9a-fA-F]+$/) {
         printf "${indent}%s #%s \\ --get-- hex literal\n", $inst, uc $value;
     }
+    elsif ($value =~ /^%([01]+)$/) {
+        printf "${indent}%s #%s \\ --get-- binary literal\n", $inst, $value;
+    }
     else {
-        printf "${indent}%s var_%s \\ --get-- variable?\n", $inst, $value;
+        printf "${indent}%s var_%s \\ %d --get-- variable?\n", $inst, $value, __LINE__;
     };
 };
 
@@ -399,14 +670,22 @@ sub simple_op {
     if ($value =~ /^($KNOWN_VARS)$/i) {
         printf "${indent}%s %s \\ --simple_op-- variable\n", $inst, $KNOWN_VARS{$value};
     }
+    elsif ($value =~ /^($STATE_BYTE)$/i) {
+        my $offset = $STATE_BYTE{$value};
+        printf "${indent}%s state_bytes + %d \\ %d --simple_op-- state byte\n", $inst, $offset, __LINE__;
+        #die "Stopping for investigation.";
+    }
     elsif ($value =~ /^[0-9]+$/) {
         printf "${indent}%s #%d \\ --simple_op-- decimal literal\n", $inst, $value;
     }
     elsif ($value =~ /^&[0-9a-fA-F]+$/) {
         printf "${indent}%s #%s \\ --simple_op-- hex literal\n", $inst, uc $value;
     }
+    elsif ($value =~ /^%([01]+)$/) {
+        printf "${indent}%s #%s \\ --simple_op-- binary literal\n", $inst, $value;
+    }
     else {
-        printf "${indent}%s var_%s \\ --simple_op-- variable?\n", $inst, $value;
+        printf "${indent}%s var_%s \\ %d --simple_op-- variable?\n", $inst, $value, __LINE__;
     };
 };
 
@@ -446,10 +725,10 @@ sub recurse {
     if ($op =~ /get/i) {
         #printf "${indent}\\ GETs: %d Stack depth: %d\n", $GETS, $STACK_DEPTH;
         if (!$r) {
-            
+            #printf "${indent}\\ %d \$GETS=%d\n", __LINE__, $GETS;
             if ($GETS++) {
                 ++$STACK_DEPTH;
-                printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+                printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             };
             #if ($value =~ /^[0-9]+$/) {
             #    printf "${indent}LDA #%d\n", $value;
@@ -471,7 +750,16 @@ sub recurse {
         };
     }
     elsif ($op =~ /^seop$/i) {
-        printf "${indent}JSR seop_%s\n", lc $value;
+        my $seop = $value;
+        printf "${indent}\\ %d Single-ended operation: '%s'\n", __LINE__, $seop;
+        if ($seop =~ /LOCOF/i) {
+            printf "${indent}TAX \\ needs to be in X\n";
+            printf "${indent}LDA object_loc, X\n";
+        }
+        else {
+            printf "${indent}JSR seop_%s\n", lc $seop;
+            die "Stopping for investigation";
+        };
     }
     elsif ($op =~ /^\+$/) {
         if ($can_simplify) {
@@ -486,7 +774,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_add \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -504,7 +792,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_sub \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -523,7 +811,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_mul \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -542,7 +830,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_div \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -562,7 +850,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_mod \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -570,7 +858,7 @@ sub recurse {
     }
     elsif ($op =~ /^RCMP$/i) {
         ++$STACK_DEPTH;
-        printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+        printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
         get $value, $depth;
         --$STACK_DEPTH;
         printf "${indent}JSR deop_rcmp \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -586,7 +874,7 @@ sub recurse {
         }
         else {
             ++$STACK_DEPTH;
-            printf "${indent}JSR pushA \\ Stack depth now %d\n", $STACK_DEPTH;
+            printf "${indent}JSR pushA \\ %d Stack depth now %d\n", __LINE__, $STACK_DEPTH;
             get $value, $depth;
             --$STACK_DEPTH;
             printf "${indent}JSR deop_cmp \\ Stack depth now %d\n", $STACK_DEPTH;
@@ -609,6 +897,13 @@ sub recurse {
             #--$STACK_DEPTH;
             #printf "${indent}JSR deop_%s \\ Stack depth now %d\n", lc($op), $STACK_DEPTH;
         };
+    }
+    elsif ($op =~ /^table$/i) {
+        my $size = Table->size($value);
+        printf "${indent}\\ %d TABLE LOOKUP '%s' (%s)\n", __LINE__, $value, $size;
+        printf "${indent}LDX #tbl_%s MOD &100\n", lc $value;
+        printf "${indent}LDY #tbl_%s DIV &100\n", lc $value;
+        printf "${indent}JSR table_get_%s\n", lc $size;
     }
     else {
         printf "${indent}\\ OTHER\n";
@@ -768,7 +1063,10 @@ sub new {
                                 if ($before) {
                                     printf "Before: '%s'\n", $before;
                                 };
-                                ($self, $pos) = $self->append_bracket($sub_expr);
+                                #($self, $pos) = $self->append_bracket($sub_expr);
+                                #This is new-style code!
+                                my $new_brkt = new Bracket($sub_expr);
+                                $pos = $new_brkt->serial;
                                 print "Replace '$sub_expr' with 'BRKT$pos'.\n";
                                 #push @{$self->{"_terms"}}, $sub_expr;
                                 ++$subs;
@@ -821,14 +1119,11 @@ sub new {
             print "NB \$self includes bracketed sub-expressions\n";
         };
         my $new_list = $self->new_plus_minus_list($expr);
-        #if (@{$self->{"_terms"}} == 0)
         if ($self->terms == 0) {
             print "Our list is empty!\n";
             printf "New list is %s", Dumper $new_list;
             print "We will make its terms, our terms.\n";
             $self->{"_terms"} = $new_list->{"_terms"};
-            #print "And its first operation will be our operation.\n";
-            #$self->{"_terms"}[0]->{"_op"} = $self->{"_op"};
             print "And its first operation will be 'get'.\n";
             $self->{"_terms"}[0]->{"_op"} = "get";
         }
@@ -851,8 +1146,6 @@ sub new {
     
     $self->resolve_seops;
     
-    $self->fix_brackets;
-
     #if (@{$self->{"_terms"}} == 1) 
     if ($self->terms == 1) {
         print "NB: THIS EXPRESSION HAS ONLY ONE TERM IN IT!\n";
@@ -908,69 +1201,6 @@ sub terms {
     @{$self->{"_terms"}};
 };
 
-sub fix_brackets {
-    my $self = shift;
-    my ($i, $r, $o, $v, $term, $pos);
-    
-    my $brkt = shift;
-    
-    print "~" x 70, "\n";
-    printf "%d BEFORE FIX_BRACKETS %s\n", __LINE__, Dumper $self;
-    print "~" x 70, "\n";
-    
-    my @terms = $self->terms;
-    for ($i = 0; $i < @terms; ++$i) {
-        $term = $terms[$i];
-        $r = ref $term;
-        if ($r) {
-            printf "Term %d of %d is '%s'\n", $i, scalar (@terms), $r;
-            if ($r =~ /NumExpr/i) {
-                printf "It's a NumExpr.\n";
-                $term->fix_brackets($self->{"_brkt"});
-            }
-            elsif ($r =~ /NumTerm/i) {
-                $v = $term->value;
-                $o = $term->op;
-                printf "It's a NumTerm!\nOperation '%s' Value '%s'\n", $o, $v;
-                
-                if ($v =~ /BRKT(\d+)/i) {
-                    if ($brkt) {
-                        print "We have some bracekted expressions.\n";
-                        $pos = $1;
-                        printf "(fix_brackets) Replacing BRKT%d with expression (%s) (%s)\n", $pos, ref $brkt->[$pos], $o;
-                        $self->{"_terms"}[$i] = $brkt->[$pos];
-                        #$self->{"_terms"}[$i]->{"_terms"}[0]->{"_op"} = $o;
-                        $self->{"_terms"}[$i]->{"_op"} = $o;
-                        printf "%d \$self = %s", __LINE__, Dumper $self;
-                    }
-                    elsif ($self->{"_brkt"}) {
-                        print "Expression contains bracketed subexpressions.\n";
-                        $pos = $1;
-                        printf "(fix_brackets) Replacing BRKT%d with expression (%s) (%s)\n", $pos, ref $self->{"_brkt"}[$pos], $o;
-                        $self->{"_terms"}[$i] = $self->{"_brkt"}[$pos];
-                        #$self->{"_terms"}[$i]->{"_terms"}[0]->{"_op"} = $o;
-                        $self->{"_terms"}[$i]->{"_op"} = $o;
-                        printf "%d \$self = %s", __LINE__, Dumper $self;
-                    }
-                    else {
-                        print "Oh no! Panic! We have no \$brkt!\n";
-                        printf "%d %s", __LINE__, Dumper $self;
-                    };
-                };
-            };
-        }
-        else {
-            printf "Term %d of %d is a scalar: '%s'\n", $i, scalar (@terms), $term;
-        };
-    };
-    
-    print "~" x 70, "\n";
-    printf "%d AFTER FIX_BRACKETS %s\n", __LINE__, Dumper $self;
-    print "~" x 70, "\n";
-    
-    return $self;
-};
-
 sub resolve_seops {
     my $self = shift;
     my ($i, $r, $o, $v, $term, $pos, @seop);
@@ -978,6 +1208,8 @@ sub resolve_seops {
     print "~" x 70, "\n";
     printf "%d BEFORE RESOLVE_SEOPS %s\n", __LINE__, Dumper $self;
     print "~" x 70, "\n";
+    
+    my $table = Table->regexp;
     
     my @terms = $self->terms;
     for ($i = 0; $i < @terms; ++$i) {
@@ -992,15 +1224,25 @@ sub resolve_seops {
             elsif ($r =~ /NumTerm/i) {
                 $v = $term->value;
                 $o = $term->op;
-                printf "It's a NumTerm!\nOperation '%s' Value '%s'\n", $o, $v;
+                printf "%d It's a NumTerm!\nOperation '%s' Value '%s'\n", __LINE__, $o, $v;
                 
                 if ($v =~ /($NUM_SEOP)/i) {
-                    print "The expression may be a single-ended operation chain!\n";
+                    printf "%s matched /%s/i (%s)\n", $v, $NUM_SEOP, $1;
+                    printf "%d The expression may be a single-ended operation chain! (%s)\n", __LINE__, $1;
+                    @seop = split /\s+/, $v;
+                    print "|", join "|", @seop;
+                    print "|\n";
+                    my $new_list = $self->new_seop_list($v, $o);
+                    #$self->{"_terms"}[$i] = $new_list;
+                    $self->set_term($i, $new_list);
+                }
+                elsif ($table && ($v =~ /($table)/i)) {
+                    printf "%s matched /%s/i (%s)\n", $v, $table, $1;
+                    printf "%d The expression may be a table lookup! (%s)\n", __LINE__, $1;
                     @seop = split /\s+/, $v;
                     print "|", join "|", @seop;
                     print "|\n";
                     my $new_list = $self->new_seop_list($v);
-                    #$self->{"_terms"}[$i] = $new_list;
                     $self->set_term($i, $new_list);
                 }
                 else {
@@ -1013,9 +1255,9 @@ sub resolve_seops {
         };
     };
     
-    print "~" x 70, "\n";
-    printf "%d AFTER RESOLVE_SEOPS %s\n", __LINE__, Dumper $self;
-    print "~" x 70, "\n";
+#     print "~" x 70, "\n";
+#     printf "%d AFTER RESOLVE_SEOPS %s\n", __LINE__, Dumper $self;
+#     print "~" x 70, "\n";
     
     return $self;
 };
@@ -1028,6 +1270,7 @@ sub new_seop_list {
     my $op = shift || "get";
     
     my (@seop, $i, $e);
+    my $table = Table->regexp;
     
     print "This is NumExpr::new_seop_list\n";
 
@@ -1050,20 +1293,49 @@ sub new_seop_list {
 	    printf "Item %d of %d is '%s'\n", $i, scalar(@seop), $e;
 	    
 	    if ($i == @seop - 1) {
-	        $self->prepend_term($seop[$i], $op);
+            if ($e =~ /^BRKT(\d+)$/) {
+                my $pos = $1;
+                printf "Looks like a bracketed subexpression 'BRKT%d'\n", $pos;
+                # This is already new-style code
+                my $brkt = new NumExpr(Bracket->get($pos)->expr, $op);
+                $self->prepend_term($brkt, $op);
+            }
+            else {
+                $self->prepend_term($seop[$i], $op);
+            };
 	    }
 	    elsif ($expr =~ /($NUM_SEOP)/i) {
+	        printf "%d Looks like a single-ended operation\n", __LINE__;
 	        $self->prepend_term($seop[$i], "seop");
 	    }
+	    elsif ($e =~ /^($table)$/i) {
+	        #printf "\$table=\n%s\n", $table;
+	        printf "%d Looks like a table lookup\n", __LINE__;
+	        $self->prepend_term($seop[$i], "table");
+	        #die "Recognised table lookup"
+	    }
 	    else {
+	        printf "\$table=\n%s\n", $table;
 	        die "Unknown numeric single-ended operation '$e'";
 	    };
 	}
     
+    if ($self->terms == 1) {
+        printf "%d NB: THIS EXPRESSION HAS ONLY ONE TERM IN IT!\n", __LINE__;
+        printf "%d Expression = %s", __LINE__, Dumper $self;
+        #my $term0 = $self->{"_terms"}[0];
+        my $term0 = ($self->terms)[0];
+        printf "%d Its type is '%s'.\n", __LINE__, ref $term0;
+        my $o1 = $self->{"_op"};
+        if (ref $term0) {
+            $self = $term0;
+            $self->{"_op"} = $o1;
+        };
+    };
+    
     printf "%d \$self is now %s", __LINE__, Dumper $self;
     return $self;
 };
-
 
 sub split_times_divide {
     my $self = shift;
@@ -1118,10 +1390,9 @@ sub split_times_divide {
         };
     };
     
-
-    print "\@" x 70, "\n";
-    printf "%d AFTER SPLITTING */%% OPERATION LISTS:\n\$self = %s", __LINE__, Dumper $self;
-    print "\@" x 70, "\n";
+#     print "\@" x 70, "\n";
+#     printf "%d AFTER SPLITTING */%% OPERATION LISTS:\n\$self = %s", __LINE__, Dumper $self;
+#     print "\@" x 70, "\n";
     
     return $self;
 };
@@ -1158,27 +1429,51 @@ sub new_plus_minus_list {
 
     bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
 
-    while ($expr =~ /(\+|-|RCMP|CMP|CPX|CPY|EOR|AND|OR)/) {
+    my $done = FALSE;
+    #while ($expr =~ /(\+|-|RCMP|CMP|CPX|CPY|EOR|AND|OR)/)
+    while (!$done) {
         #printf "%d %s", __LINE__, Dumper $self;
-        printf "Looking for + and - operations in '%s' (%s)\n", $expr, $op;
+        printf "%d Looking for + and - operations in '%s' (%s)\n", __LINE__, $expr, $op;
         print "~" x 70, "\n";
         printf "%d \$self=%s", __LINE__, Dumper $self;
         printf "\$expr=%s\n", $expr;
         print "~" x 70, "\n";
         #$op = "";
-        if ($expr =~ /^(.*?)\s*(\+|-|RCMP|CMP|CPX|CPY|EOR|AND|OR)\s*(.*)$/) {
+        
+        #$done = TRUE;
+        
+        if ($expr =~ /^(.*?)\s+(\RCMP|CMP|CPX|CPY|EOR|AND|OR)\s+(.*)$/) {
             $before = $1;
             $new_op = $2;
             $after = $3;
             $before =~ s/^\s*|\s*$//g;
             $after =~ s/^\s*|\s*$//g;
             
-            print "Old Op:'$op'\nBefore:'$before'\n";
-            print "New Op:'$new_op'\nAfter :'$after'\n";
+            printf "%d Old Op:'%s'\nBefore:'%s'\n", __LINE__, $op, $before;
+            printf "New Op:'%s'\nAfter :'%s'\n", $new_op, $after;
             
             $self->append_term($before, $op, $self->{"_brkt"});
             $expr = $after;
             $op = $new_op;
+            #$done = FALSE;
+        }
+        elsif ($expr =~ /^(.*?)\s*(\+|-)\s*(.*)$/) {
+            $before = $1;
+            $new_op = $2;
+            $after = $3;
+            $before =~ s/^\s*|\s*$//g;
+            $after =~ s/^\s*|\s*$//g;
+            
+            printf "%d Old Op:'%s'\nBefore:'%s'\n", __LINE__, $op, $before;
+            printf "New Op:'%s'\nAfter :'%s'\n", $new_op, $after;
+            
+            $self->append_term($before, $op, $self->{"_brkt"});
+            $expr = $after;
+            $op = $new_op;
+            #$done = FALSE;
+        }
+        else {
+            $done = TRUE;
         };
     };
     print "No more +- operations";
@@ -1302,6 +1597,9 @@ sub append_term {
     printf "Appending term of type '%s'\n", $r;
     if ($r && $value->{"_brkt"}) {
         print "Invoked on something with bracketed subexpressions!\n";
+    }
+    elsif (!$r) {
+        printf "%d Scalar '%s'\n", __LINE__, $value;
     };
     if ($r =~ /NumExpr/i) {
         print "The thing we are appending is a NumExpr.\n";
@@ -1312,13 +1610,57 @@ sub append_term {
     }
     else {
         printf "%d The thing we are appending needs making into a NumTerm.\n", __LINE__;
+        my $table = Table->regexp;
+        printf "Tables match /%s/\n", $table;
+        printf "Single-ended operations match /%s/\n", $NUM_SEOP;
         if ($r) {
-            printf "It's of type %s\n\$value = %s", $r, Dumper $value
+            printf "It's of type %s\n\$value = %s", $r, Dumper $value;
+            push @{$self->{"_terms"}}, new NumTerm($value, $op);
+            die "Stopping for investigation.";
         }
         else {
-            printf "It's a scalar\nvalue = '%s'\n", $value;
+            printf "%d It's a scalar\nvalue = '%s'\n", __LINE__, $value;
+            # if ($value =~ /(\+|-|\*|\/|%|RCMP|CMP|CPX|CPY|EOR|AND|OR)/)
+            if ($value =~ /\+|-|\b(RCMP|CMP|CPX|CPY|EOR|AND|OR)\b/) {
+                printf "Looks like an expression!\n";
+                push @{$self->{"_terms"}}, new NumExpr($value, $op);
+            }
+            elsif ($value =~ /^BRKT(\d+)$/) {
+                my $pos = $1;
+                printf "%d Looks like a bracketed subexpression 'BRKT%d'\n", __LINE__, $pos;
+                # This is already new-style code
+                push @{$self->{"_terms"}}, new NumExpr(Bracket->get($pos)->expr, $op);
+            }
+
+            # Not sure this is the right place to look for single-ended ops?
+            elsif ($value =~ /($NUM_SEOP)/i) {
+                printf "%s matched /%s/i (%s)\n", $value, $NUM_SEOP, $1;
+                printf "%d Looks like a single-ended operation chain! (%s)\n", __LINE__, $1;
+                #@seop = split /\s+/, $value;
+                #print "|", join "|", @seop;
+                #print "|\n";
+                #my $new_list = $self->new_seop_list($v);
+                ##$self->{"_terms"}[$i] = $new_list;
+                #$self->set_term($i, $new_list);
+                push @{$self->{"_terms"}}, $self->new_seop_list($value, $op);
+                #die "Stopping for investigation.";
+            }
+            #elsif ($table && ($value =~ /($table)/i)) {
+            #    printf "%s matched /%s/i (%s)\n", $value, $table, $1;
+            #    printf "%d The expression may be a table lookup! (%s)\n", __LINE__, $1;
+            #    #@seop = split /\s+/, $v;
+            #    #print "|", join "|", @seop;
+            #    #print "|\n";
+            #    #my $new_list = $self->new_seop_list($v);
+            #    #$self->set_term($i, $new_list);
+            #    die "Stopping for investigation.";
+            #}
+            
+            else {
+                printf "Looks like a plain term. '%s'\n", $value;
+                push @{$self->{"_terms"}}, new NumTerm($value, $op);
+            };
         };
-        push @{$self->{"_terms"}}, new NumTerm($value, $op);
     };
     
     printf "%d %s", __LINE__, Dumper $self;
@@ -1489,11 +1831,34 @@ sub new {
     my $true_dest = "DEST_T";
     my $branch_if = "UNKNOWN";
     
-    if ($expr =~ /^\s*(POZ|NEG|ZERO|NZ|UNVISITED|VISITED|ISSET|UNSET)\s+(.*?)\s*$/i) {
+    printf "${indent}\\ %d Expression is '%s'\n", __LINE__, $expr;
+    
+    if ($expr =~ /\s*(N?)([CV])FLAG\s*$/i) {
+        $rel = $1;
+        $lhs = $2;
+        printf "${indent}\\ %d FLAG TEST: '%s' '%s' (%s <-> %s)\n",__LINE__, $rel, $lhs, $false_dest, $true_dest;
+        
+        if ($rel =~ /n/i) {
+            $self->set_false_branch("B${lhs}S");
+            $self->set_true_branch("B${lhs}C");
+        }
+        else {
+            $self->set_false_branch("B${lhs}C");
+            $self->set_true_branch("B${lhs}S");
+        };
+        
+        undef $self->{"_expr"};
+        
+        print Dumper $self;
+        
+        #die "Stopping for investigation.";
+    }
+    
+    elsif ($expr =~ /^\s*(POZ|NEG|ZERO|NZ|UNVISITED|VISITED|ISSET|UNSET)\s+(.*?)\s*$/i) {
         $rel = $1;
         $rhs = $2;
 
-        printf "${indent}\\ SINGLE-ENDED RELATION: '%s' '%s' (%s <-> %s)\n", $rel, $rhs, $false_dest, $true_dest;
+        printf "${indent}\\ SINGLE-ENDED RELATION (1): '%s' '%s' (%s <-> %s)\n", $rel, $rhs, $false_dest, $true_dest;
         printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
 
         $self->{"_num_expr"} = new NumExpr($rhs, "get");
@@ -1511,8 +1876,8 @@ sub new {
             $self->set_true_branch("BEQ");
         }
         elsif ($rel =~ /NZ/i) {
-            $self->set_false_branch("BNE");
-            $self->set_true_branch("BEQ");
+            $self->set_false_branch("BEQ");
+            $self->set_true_branch("BNE");
         }
         elsif ($rel =~ /UNVISITED/i) {
             $self->append_code("JSR real_get_visited");
@@ -1535,11 +1900,30 @@ sub new {
             $self->set_true_branch("BEQ");
         }
     }
-    elsif ($expr =~ /^\s*(NOCARRY|CARRY\S*|NOTGOT)\s+(.*?)\s*$/i) {
+    elsif ($expr =~ /^\s*(UNAVAIL|AVAIL)\s+(.*?)\s*$/i) {
         $rel = $1;
         $rhs = $2;
 
         printf "${indent}\\ SINGLE-ENDED RELATION (2): '%s' '%s' (%s <-> %s)\n", $rel, $rhs, $false_dest, $true_dest;
+        printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
+
+        $self->{"_num_expr"} = new NumExpr($rhs, "get");
+        $self->{"_num_expr"}{"_get_in_x"} = TRUE;
+        $self->append_code("JSR real_test_avail_X");
+        if ($rel =~ /UN/i) {
+            $self->set_false_branch("BEQ");
+            $self->set_true_branch("BNE");
+        }
+        else {
+            $self->set_false_branch("BNE");
+            $self->set_true_branch("BEQ");
+        };
+    }
+    elsif ($expr =~ /^\s*(NOCARRY|CARRY\S*|NOTGOT)\s+(.*?)\s*$/i) {
+        $rel = $1;
+        $rhs = $2;
+
+        printf "${indent}\\ SINGLE-ENDED RELATION (3): '%s' '%s' (%s <-> %s)\n", $rel, $rhs, $false_dest, $true_dest;
         printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
 
         $self->{"_num_expr"} = new NumExpr($rhs, "get");
@@ -1591,7 +1975,7 @@ sub new {
         $rel = $2;
         $rhs = $3;
         
-        printf "${indent}\\ DOUBLE-ENDED RELATION (3): '%s' '%s' '%s' (%s <-> %s)\n", $lhs, $rel, $rhs, $false_dest, $true_dest;
+        printf "${indent}\\ %d DOUBLE-ENDED RELATION (3): '%s' '%s' '%s' (%s <-> %s)\n", __LINE__, $lhs, $rel, $rhs, $false_dest, $true_dest;
         printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
         
         #  Emulate LE and GT relations by swapping operands and using GE/LT
@@ -1606,6 +1990,7 @@ sub new {
             };
         };
         
+        printf "${indent}\\ COMPARISON: %s CMP %s\n", $lhs, $rhs;
         $self->{"_num_expr"} = new NumExpr("$lhs CMP $rhs");
         if ($rel =~ /ISNT|NE/i) {
             $branch_if_false = "BEQ";
@@ -1627,8 +2012,44 @@ sub new {
         $self->{"_b_false"} = $branch_if_false;
         $self->{"_b_true"} = $branch_if_true;
     }
+    ##########  SYNTACTIC SUGAR: NAKED STATE BIT IMPLIES ISSET  ##########
+    elsif ($expr =~ /^($STATE_BIT)$/i) {
+        $lhs = $1;
+        $rhs = $STATE_BIT{$lhs};
+
+        printf "${indent}\\ NAKED STATE BIT (1): '%s' '%s' (%s <-> %s)\n", $lhs, $rhs, $false_dest, $true_dest;
+        printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
+
+        $self->{"_num_expr"} = new NumExpr($rhs, "get");
+        $self->append_code("JSR real_get_state_bit");
+        $self->set_false_branch("BEQ");
+        $self->set_true_branch("BNE");
+    }
+    elsif ($expr =~ /un/i) {
+        my $inv_expr = $expr;
+        $inv_expr =~ s/un//gi;
+        if ($inv_expr =~ /^($STATE_BIT)$/i) {
+            $lhs = $1;
+            $rhs = $STATE_BIT{$lhs};
+
+            printf "${indent}\\ NAKED STATE BIT WITH 'UN': '%s'/'%s' '%s' (%s <-> %s)\n", $expr, $lhs, $rhs, $false_dest, $true_dest;
+            printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
+
+            $self->{"_num_expr"} = new NumExpr($rhs, "get");
+            $self->append_code("JSR real_get_state_bit");
+            $self->set_false_branch("BNE");
+            $self->set_true_branch("BEQ");
+        }
+        else {
+            die "Unknown inverted status bit '$expr'";
+        }
+    }
+    elsif ($expr =~ /^BRKT(\d+)$/i) {
+        die "Stopping for investigation";
+    }
     else {
-        printf "${indent}\\ OTHER TEST: '%s' (%s <-> %s)\n", $expr, $false_dest, $true_dest;
+        printf "${indent}\\ %d OTHER TEST: '%s' (%s <-> %s)\n", __LINE__, $expr, $false_dest, $true_dest;
+        die "Don't know how to test this!";
         $self->{"_b_false"} = $branch_if_false;
         $self->{"_b_true"} = $branch_if_true;
         #$X_DIRTY = TRUE;
@@ -1685,10 +2106,10 @@ sub recurse {
     #printf "${indent}\\ false_dest => '%s' true_dest => '%s'\n", $false_dest, $true_dest;
     
     if ($branch_if) {
-        printf "${indent}\\ %d TEST (%s) TRUE => '%s'\n", __LINE__, $self->{"_expr"}, $true_dest;
+        #printf "${indent}\\ %d TEST (%s) TRUE => '%s'\n", __LINE__, $self->{"_expr"}, $true_dest;
     }
     else {
-        printf "${indent}\\ %d TEST (%s) FALSE => '%s'\n", __LINE__, $self->{"_expr"}, $false_dest;
+        #printf "${indent}\\ %d TEST (%s) FALSE => '%s'\n", __LINE__, $self->{"_expr"}, $false_dest;
     };
     
     #printf "${indent}\\ BRANCH IF %s\n", $branch_if ? "TRUE" : "FALSE";
@@ -1696,16 +2117,24 @@ sub recurse {
     if ($false_dest =~ /^el/i) {
         printf "${indent}\\ false_dest '%s' needs a far jump\n", $false_dest;
     };
-    
-    if ($expr =~ /CARRY|NOTGOT/) {
+    if (!$num_expr) {
+        printf "${indent}\\ %d No expression?! Oh well\n", __LINE__;
+    }
+    elsif ($expr =~ /CARRY|NOTGOT|UNAVAIL|AVAIL/) {
         print "${indent}\\ mumble mumble CARRY\n";
         $num_expr->get_in_X($depth);
     }
     else {
-        #print "-" x 70, "\n";
-        #print Dumper $num_expr;
-        #print "-" x 70, "\n";
-        $num_expr->recurse($depth);
+        if (ref $num_expr) {
+            $num_expr->recurse($depth);
+        }
+        else {
+            #printf "%d %s\n", __LINE__, "-" x 70;
+            #printf "%s\n", $expr;
+            #print Dumper $num_expr;
+            #print "-" x 70, "\n";
+            die "Unresolvable numeric expression '$expr'";
+        };
     };
     
     if (@after = $self->after) {
@@ -1760,15 +2189,16 @@ sub new {
     my ($term, $type, $i);
     my $self = { "_serial" => ++$op_list_serial,
                  "_terms" => [] };
-
-        if ($expr =~ /OR/i) {
+    printf "%d Making a new OpList with '%s'\n", __LINE__, $expr;
+                 
+        if ($expr =~ /\bOR\b/i) {
             print "Expression is an OR list!\n";
             $self->{"_operation"} = "or";
             $self->{"_terms"} = [split /\s*OR\s*/i, $expr];
             print Dumper \$self->{"_terms"};
             
         }
-        elsif ($expr =~ /AND/) {
+        elsif ($expr =~ /\bAND\b/) {
             print "Expression is an AND list!\n";
             $self->{"_operation"} = "and";
             $self->{"_terms"} = [split /\s*AND\s*/i, $expr];
@@ -1782,22 +2212,32 @@ sub new {
 
         $i = 0;
         foreach (@{$self->{"_terms"}}) {
-            printf "Term %d: '%s'\n", $i, ref $_;
+            printf "%d Term %d: '%s'\n", __LINE__, $i, ref $_;
             if (ref $_) {
+                printf "%d -- it's of type '%s'\n", __LINE__, ref $_;
             }
             else {
-                printf "-- it's a scalar, '%s'\n", $_;
-                if (/(AND|OR)/) {
+                printf "%d -- it's a scalar, '%s'\n", __LINE__, $_;
+                if (/\b(AND|OR)\b/) {
                     print "It's a list!\n";
                     $self->{"_terms"}[$i] = new OpList($_, $parent);
                 }
-                elsif (/BRKT(\d+)/) {
+                elsif (/^BRKT(\d+)$/) {
                     my $brkt = $1;
                     printf "It's a reference to bracket %d.\n", $brkt;
                     #  NB: we must make this a reference; because the value
                     #  currently there is a scalar, which is going to be
                     #  overwritten with an equivalent object.
-                    $self->{"_terms"}[$i] = \$parent->{"_terms"}[$brkt];
+                    
+                    #$self->{"_terms"}[$i] = new OpList(Bracket->get($brkt)->expr, $parent);
+                    my $new_expr = Bracket->get($brkt)->expr;
+                    printf "%d %s", __LINE__, Dumper $self->{"_terms"}[$i];
+                    $self->{"_terms"}[$i] = $new_expr;
+                    printf "%d %s", __LINE__, Dumper $self->{"_terms"}[$i];
+                    printf "%d BRKT%d => '%s'\n", __LINE__, $brkt, $new_expr;
+                    #die "Stopping for investigation";
+                    # the old way
+                    #$self->{"_terms"}[$i] = \$parent->{"_terms"}[$brkt];
                 };
             };
             ++$i;
@@ -1863,13 +2303,13 @@ sub resolve_rel {
         $term = $terms[$i];
         $r = ref $term;
         if (!$r) {
-            printf "Term %d of %d is scalar: '%s'.\n", $i, scalar (@terms), $term;
+            printf "%d Term %d of %d is scalar: '%s'.\n", __LINE__, $i, scalar (@terms), $term;
             $term = new NumRel($term);
             #$terms[$i] = $term;
             $self->set_term($i, $term);
         }
         elsif ($r =~ /BoolExpr|OpList/i) {
-            printf "Term %d of %d is known '%s'.\n", $i, scalar (@terms), $r;
+            printf "%d Term %d of %d is known '%s'.\n", __LINE__, $i, scalar (@terms), $r;
             $term->resolve_rel;
         }
         else {
@@ -1902,8 +2342,8 @@ sub recurse {
     my $false_dest = $orig_false_dest = shift // "";
     my $true_dest = $orig_true_dest = shift // "";
     
-    printf "${indent}\\ %d This is OpList::recurse (%s; parent is %s)\n", __LINE__, $op, $parent_op;
-    printf "${indent}\\ %d false_dest => '%s' true_dest => '%s'\n", __LINE__, $false_dest, $true_dest;
+    #printf "${indent}\\ %d This is OpList::recurse (%s; parent is %s)\n", __LINE__, $op, $parent_op;
+    #printf "${indent}\\ %d false_dest => '%s' true_dest => '%s'\n", __LINE__, $false_dest, $true_dest;
     
     #print Dumper $parent;
     #print "${indent}\\ This is OpList::recurse.\n";
@@ -1914,7 +2354,7 @@ sub recurse {
     if (ref $parent) {
         $op1 = $parent->operation;
         $ser1 = $parent->serial;
-        printf "${indent}\\ %d Parent is list %d of type '%s' (%d) at step %d\n", __LINE__, $ser1, $op1, scalar($parent->terms), $parent_step;
+        #printf "${indent}\\ %d Parent is list %d of type '%s' (%d) at step %d\n", __LINE__, $ser1, $op1, scalar($parent->terms), $parent_step;
         if ($op1 =~ /o/i) {
             #printf "${indent}\\ Force parent true at %s%d_t\n",  $op1, $ser1;
             #printf "${indent}\\ Or fall through to %s%dterm%s\n", 
@@ -1930,14 +2370,14 @@ sub recurse {
             #$false_dest = sprintf "%s%dterm%s",  $op1, $ser1, scalar($parent->terms);# + 1;
             #$true_dest = sprintf "%s%dterm%s", $op1, $ser1, $parent_step + 1;
         };
-        printf "${indent}\\ %d fd=>'%s' td=>'%s'\n", __LINE__, $false_dest, $true_dest;
+        #printf "${indent}\\ %d fd=>'%s' td=>'%s'\n", __LINE__, $false_dest, $true_dest;
     }
     else {
-        printf "${indent}\\ %d We seem to be an orphan.\n", __LINE__;
+        #printf "${indent}\\ %d We seem to be an orphan.\n", __LINE__;
         if ($false_dest =~ /^el/i) {
-            printf "${indent}\\ false_dest '%s' needs a far jump\n", $false_dest;
+            #printf "${indent}\\ false_dest '%s' needs a far jump\n", $false_dest;
             $false_dest = sprintf "%s%dfail", $op, $ser;
-            printf "${indent}\\ we will go via '%s'\n", $false_dest;
+            #printf "${indent}\\ we will go via '%s'\n", $false_dest;
         };
 
         if ($op =~ /o/i) {
@@ -1994,7 +2434,7 @@ sub recurse {
     my @terms = @{$self->{"_terms"}};
     my $i = 0;
     foreach (@terms) {
-        printf "${indent}.%s%dterm%d \\ %d\n", $op, $ser, $i, __LINE__;
+        printf "${indent}.%s%dterm%d \\ %d '%s'\n", $op, $ser, $i, __LINE__, $_->{"_expr"} // "";
         my $r = ref $_;
         # printf "%d ${indent}\\ ref \$_='%s'\n", __LINE__, $r;
         if ($r =~ /NumRel/i) {
@@ -2024,9 +2464,13 @@ sub recurse {
                 }
                 else {
                     ###########  AND LIST IN AND  LIST OR OUTERMOST  ###########
-                    printf "${indent}\\ %d AND list not in OR list.\n", __LINE__;
+                    #printf "${indent}\\ %d AND list not in OR list.\n", __LINE__;
                     if (@terms == 1) {
-                        printf "${indent}\\ First and only term!\n";
+                        #printf "${indent}\\ First and only term!\n";
+                        $branch_if = TRUE;
+                    }
+                    elsif ($i == @terms - 1) {
+                        #printf "${indent}\\ Last term\n";
                         $branch_if = TRUE;
                     };
                 };
@@ -2037,7 +2481,33 @@ sub recurse {
             $GETS = 0;
             $_->recurse($depth + 1, $false_dest, $true_dest, $branch_if);
         }
+        elsif ($r =~ /OpList/) {
+            my $child_op = $_->{"_operation"};
+            #print "-" x 70, "\n";
+            #print Dumper $_;
+            #print "-" x 70, "\n";
+            #printf "We are the parent (%s) now; child is '%s'.\n", $op, $child_op;
+
+            $op1 = $_->{"_operation"};
+            $ser1 = $_->{"_serial"};
+            
+            if ($op =~ /o/i) {
+                #$false_dest = "${op}${ser}_f $op1${ser1} (OR)";
+                #$true_dest = sprintf "%s%d_t (OR)", $op, $ser;
+                #$false_dest = sprintf "%s%d", $op, $ser + 1;
+            }
+            else {
+                #$false_dest = "${op}${ser}_f $op1${ser1} (AND)";
+                #$true_dest = "${op}${ser}_t $op1${ser1} (AND)";
+                #$true_dest = sprintf "%s%d", $op, $ser + 1;
+            };
+            #printf "${indent}\\ %d About to recurse. fd='%s' td='%s'\n", __LINE__, $false_dest, $true_dest;
+            $_->recurse($depth + 1, $self, $i, $false_dest, $true_dest);
+
+            #die "Operation list!";
+        }
         elsif ($r) {
+            printf "%d \$_ is of type '%d'\n", __LINE__, $r;
             #printf "This is op %s ser %d\n", $_->{"_operation"}, $_->{"_serial"};
             $op1 = ${$_}->{"_operation"};
             $ser1 = ${$_}->{"_serial"};
@@ -2052,7 +2522,7 @@ sub recurse {
                 #$true_dest = "${op}${ser}_t $op1${ser1} (AND)";
                 #$true_dest = sprintf "%s%d", $op, $ser + 1;
             };
-            printf "${indent}\\ %d About to recurse. fd='%s' td='%s'\n", __LINE__, $false_dest, $true_dest;
+            #printf "${indent}\\ %d About to recurse. fd='%s' td='%s'\n", __LINE__, $false_dest, $true_dest;
             ${$_}->recurse($depth + 1, $self, $i, $false_dest, $true_dest);
         }
         else {
@@ -2091,10 +2561,10 @@ sub recurse {
     #print " " x (4 * $depth);
     
     if (defined $parent && $parent->{"_operation"} =~ /o/) {
-        printf "${indent}\\ parent is OR\n";
+        #printf "${indent}\\ parent is OR\n";
     }
     else {
-        printf "${indent}\\ %d parent is AND, or we are an orphan\n", __LINE__;
+        #printf "${indent}\\ %d parent is AND, or we are an orphan\n", __LINE__;
         printf "${indent}.%s%dfail\n", $op, $ser;
         printf "${indent}    JMP %s\n", $orig_false_dest;
     };
@@ -2112,12 +2582,12 @@ sub recurse {
         #printf "${indent} op1 '%s' ser1 '%d' op '%s' ser '%d'\n", $op1, $ser1, $op, $ser;
         #print " " x (4 * $depth);
         if ($op1 =~ /o/i) {
-            printf "${indent}\\ %d Parent operation is OR\n", __LINE__;
+            #printf "${indent}\\ %d Parent operation is OR\n", __LINE__;
             #printf "${indent}JMP %s%d_t \\ parent OR true\n", $op1, $ser1;
             #printf "${indent}JMP %s \\ parent OR true %s\n", $orig_true_dest, $orig_true_dest;
         }
         else {
-            printf "${indent}\\ %d Parent operation is AND, fall through to next test\n", __LINE__;
+            #printf "${indent}\\ %d Parent operation is AND, fall through to next test\n", __LINE__;
             # No need to JMP; we can fall through to the next test
             #printf "${indent}JMP %s \\ parent AND false %s\n", $false_dest, $orig_false_dest;
         };
@@ -2125,7 +2595,7 @@ sub recurse {
     else {
         #print " " x (4 * $depth);
         #print "We haven't got a parent.\n";
-        printf "${indent}\\ %d We seem to be an orphan.\n", __LINE__;
+        #printf "${indent}\\ %d We seem to be an orphan.\n", __LINE__;
         if ($op =~ /o/i) {
             printf "${indent}\\ End of OR list: jump to '%s'.\n", $false_dest;
             printf "${indent}    JMP %s\n", $false_dest;
@@ -2250,30 +2720,30 @@ sub new {
 
     my $self = { "_terms" => [$expr] };
     
-    print "=" x 70, "\n";
-    printf "Original expression:\n'$expr'\n";
-    print "=" x 70, "\n";
+    #print "=" x 70, "\n";
+    #printf "Original expression:\n'$expr'\n";
+    #print "=" x 70, "\n";
     
     #  See if $expr contains any brackets
 
     my $subs = 1;
     my $pass = 1;
     
-    print "-" x 70, "\n";
-    printf "PASS %d\n", $pass;
+    #print "-" x 70, "\n";
+    #printf "PASS %d\n", $pass;
     
     while ($subs) {
         $subs = 0;
         for ($i = 0; $i < @{$self->{"_terms"}}; ++$i) {
-            printf "Searching term %d of %d\n", $i, scalar @{$self->{"_terms"}};
+            printf "%d Searching term %d of %d\n", __LINE__, $i, scalar @{$self->{"_terms"}};
             $pos = TRUE;
             while (defined $pos) {
-                printf "'%s'\n", $expr;
+                #printf "%d '%s'\n", __LINE__, $expr;
                 $before = $expr = $self->{"_terms"}[$i];
                 $sub_expr = $after = "";
                 undef $pos;
                 if ($expr =~ /[()]/) {
-                    print "We have brackets to substitute!\n";
+                    printf "%d We have brackets to substitute!\n", __LINE__;
                     for ($index = 0; $index < length $expr; ++$index) {
                         $char = substr $expr, $index, 1;
                         if ($char eq "(") {
@@ -2291,14 +2761,22 @@ sub new {
                                 $sub_expr = substr $expr, $begin + 1, $length - 1;
                                 $before = substr $expr, 0, $begin;
                                 $after = substr $expr, $begin + $length + 1;
-                                printf "Before:\n'%s'\n", $before;
+                                printf "%d Before:\n'%s'\n", __LINE__, $before;
                                 printf "Bracketed sub-expression:\n'%s'\n", $sub_expr;
                                 printf "After:\n'%s'\n", $after;
-                                                
-                                $pos = @{$self->{"_terms"}};
-                                print "Replace '$sub_expr' with 'BRKT$pos'.\n";
-                                push @{$self->{"_terms"}}, $sub_expr;
+
+                                my $new_brkt = new Bracket($sub_expr);
+                                $pos = $new_brkt->serial;
+                                printf "%d Replace '%s' with 'BRKT%d'.\n", __LINE__, $sub_expr, $pos;
+                                
+                                # the old way
+                                #$pos = @{$self->{"_terms"}};
+                                #printf "%d Replace '$sub_expr' with 'BRKT$pos'.\n", __LINE__;
+                                #push @{$self->{"_terms"}}, $sub_expr;
+                                
                                 ++$subs;
+                                #Bracket->dump;
+                                #die "Stopping for investigation";
                                 last;
                             }
                             else {
@@ -2312,11 +2790,11 @@ sub new {
                     };
                 }
                 else {
-                    print "No brackets!\n";
+                    #printf "%d No brackets!\n", __LINE__;
                 };
             };
         };
-        printf "End of pass %d; substitutions %d\n", $pass++, $subs;
+        #printf "%d End of pass %d; substitutions %d\n", __LINE__, $pass++, $subs;
     };
 
     #  By the time we reach this point, an expression such as
@@ -2339,18 +2817,18 @@ sub new {
     
     #  Now we have to decompose each of the terms into an operation list.
     
-    print "-" x 70, "\n";
+    #print "-" x 70, "\n";
     
     #$self->{"_ops"} = [];
     $i = 0;
     foreach (@{$self->{"_terms"}}) {
-        printf "Bracket list term %d: '%s'\n", $i, ref $_;
+        #printf "%d Bracket list term %d: '%s'\n", __LINE__, $i, ref $_;
         #push @{$self->{"_ops"}}, new OpList($_, $self);
         $self->{"_terms"}[$i] = new OpList($_, $self);
         ++$i;
     };
 
-    print "-" x 70, "\n";
+    #print "-" x 70, "\n";
     
     $i = 0;
     #foreach (@{$self->{"_ops"}}) {
@@ -2393,7 +2871,7 @@ sub resolve_rel {
             $self->set_term($i, $term);
         }
         elsif ($r =~ /BoolExpr|OpList/i) {
-            printf "Term %d of %d is known '%s'.\n", $i, scalar (@terms), $r;
+            printf "%d Term %d of %d is known '%s'.\n", __LINE__, $i, scalar (@terms), $r;
             $term->resolve_rel;
         }
         else {
@@ -2482,30 +2960,60 @@ sub new {
     bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
 
     while ($stmt =~ /\S/) {
-        printf "Statement:\n%s\n", $stmt;
+        #printf "%d Statement:\n%s\n", __LINE__, $stmt;
         if ($stmt =~ /^\s*TABLE/) {
             printf "We have a TABLE declaration:\n'%s'\n", $stmt;
             ($self, $stmt) = $self->table($stmt);
         }
         elsif ($stmt =~ /^\s*IF/) {
-            printf "We have an IF statement:\n'%s'\n", $stmt;
+            #printf "%d We have an IF statement:\n'%s'\n", __LINE__, $stmt;
             #return $self->if($stmt);
             ($self, $stmt) = $self->if($stmt);
         }
+        elsif ($stmt =~ /^\s*REPEAT/) {
+            #printf "%d We have an IF statement:\n'%s'\n", __LINE__, $stmt;
+            #return $self->if($stmt);
+            ($self, $stmt) = $self->repeat($stmt);
+        }
         elsif ($stmt =~ /^\s*(SAY\S*)/) {
-            printf "We have a SAY command:\n'%s'\n", $stmt;
+            #printf "%d We have a SAY command:\n'%s'\n", __LINE__, $stmt;
             ($self, $stmt) = $self->say($stmt);
+            #printf "%d Remainder:\n'%s'\n", __LINE__, $stmt;
         }
-        elsif ($stmt =~ /^\s*(MESSAGE|DROP|DESTROY)/) {
-            printf "We have a one-argument command:\n'%s'\n", $stmt;
-            ($self, $stmt) = $self->one_arg($stmt);
+        elsif ($stmt =~ /^\s*REM/) {
+            printf "%d We have a comment:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->comment($stmt);
+            #printf "%d Remainder:\n'%s'\n", __LINE__, $stmt;
         }
-        elsif ($stmt =~ /^\s*(NEWLINE|NL)\b/) {
-            printf "We have a no-argument command:\n'%s'\n", $stmt;
+        elsif ($stmt =~ /^\s*ENTRY/) {
+            #printf "%d We have an ENTRY command:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->entry($stmt);
+        }
+        elsif ($stmt =~ /^\s*(NEWLINE|NL|EXIT|ENDPROC)\b/) {
+            #printf "%d We have a no-argument command:\n'%s'\n", __LINE__, $stmt;
             ($self, $stmt) = $self->no_arg($stmt);
         }
+        elsif ($stmt =~ /^\s*(DEFPROC\S+)/) {
+            #printf "%d We have a DEFPROC statement:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->defproc($stmt);
+            #printf "%d Remainder:\n'%s'\n", __LINE__, $stmt;
+        }
+        elsif ($stmt =~ /^\s*(PROC\S+)/) {
+            #printf "%d We have a PROC call:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->proc($stmt);
+            #printf "%d Remainder:\n'%s'\n", __LINE__, $stmt;
+        }
+        elsif ($stmt =~ /^\s*(INCREASE|DECREASE|DOUBLE|HALVE)/) {
+            printf "%d We have a read-modify-write:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->crease($stmt);
+            #printf "%d Remainder:\n'%s'\n", __LINE__, $stmt;
+        }
+        elsif ($stmt =~ /^\s*(MESSAGE|DROP|DESTROY|LIVE|DIE|UNSET|SET|CLEAR|ENTRY)/) {
+            #printf "%d We have a one-argument command:\n'%s'\n", __LINE__, $stmt;
+            ($self, $stmt) = $self->one_arg($stmt);
+        }
         elsif ($stmt =~ /^\s*[A-Za-z`_][A-Za-z0-9`_]*\s*:=/) {
-            printf "We have an assignment statement:\n'%s'\n", $stmt;
+            #printf "%d We have an assignment statement:\n'%s'\n", __LINE__, $stmt;
             ($self, $stmt) = $self->assign($stmt);
         }
         else {
@@ -2587,193 +3095,304 @@ sub table {
     ($self, $after);
 };
 
+sub repeat {
+    my ($index, $char, $begin, $length, $sub_stmt, $before, $after,
+        $test, @repeat, $i, $end, $wanted, $found);
+    
+    my $self = shift;
+    my $stmt = shift;
+
+    $length = length $stmt;
+    my (@stages);
+    my $run_out = FALSE;
+    
+    $stmt =~ s/^\s*|\s*$//g;
+    printf "%d %s\n", __LINE__, "~" x 70;
+    print $stmt;
+    print "~" x 70, "\n";
+    
+    #  Scan forwards until we find a closing UNTIL and take its test.
+    #  Ignore any embedded REPEAT .. UNTIL constructs!
+    
+    for ($i = 2; $i < length($stmt) - 1; ++$i) {
+        #print substr $stmt, $i, 1;
+        if (substr ($stmt, $i, 6) =~ /REPEAT/i) {
+            printf "%d Seen REPEAT at position %d (%d)\n", __LINE__, $i, scalar @repeat;
+            push @repeat, $i;
+        }
+        elsif (substr ($stmt, $i, 5) =~ /UNTIL/i) {
+            printf "%d Seen UNTIL at position %d (%d)\n", __LINE__, $i, scalar @repeat;
+            if (@repeat < 1) {
+                #my $old_i = pop @if;
+                printf "%d UNTIL at %d closes REPEAT at beginning\n", __LINE__, $i;
+                $wanted = substr $stmt, 6, $i - 6;
+                $after  = substr $stmt, $i + 5;
+                #printf "%d WANTED:'%s'\n", __LINE__, $wanted;
+                #printf "%d AFTER :'%s'\n", __LINE__, $after;
+            }
+            else {
+                my $old_i = pop @repeat;
+                printf "%d UNTIL at %d goes with REPEAT at %d\n", __LINE__, $i, $old_i;
+            };
+        };
+    };
+    
+    #  Now $wanted contains everything after IF to before FI
+    #      $after contains everything after FI
+    
+    if ($after =~ s/^\s*?(\S.*?)$//m) {
+        $test = $1;
+    }
+    else {
+        die "No test after UNTIL ?";
+    };
+    
+    $test =~ s/^\s*|\s*$//g;
+    $after =~ s/^\s*|\s*$//g;
+    
+    printf "%d WANTED:'%s'\n", __LINE__, $wanted;
+    printf "%d TEST  :'%s'\n", __LINE__, $test;
+    printf "%d AFTER :'%s'\n", __LINE__, $after;
+
+#         $new_expr = new BoolExpr($stages[$i]{"test"});
+#         $new_expr->resolve_rel;
+
+    my $new_expr = new BoolExpr($test);
+    $new_expr->resolve_rel;
+    
+    my $repeat = bless (({ "_test" => $new_expr,
+                           "_loop" => new Stmt($wanted),
+                           "_serial" => ++$Stmt::stmt_serial }), "Stmt::Repeat");
+    $self->append($repeat);
+    
+    #printf "%d %s\n", __LINE__, "=" x 70;
+    #print Dumper $self;
+    
+    #die "Your problem, meatsack";
+    ($self, $after);
+};
+
 sub if {
     my ($index, $char, $begin, $length, $sub_stmt, $before, $after,
         $test, $then, $else, @if, @test, @then);
     
     my $self = shift;
     my $stmt = shift;
+
+    ##########################  BEGIN  IMPORTED CODE  ##########################
     
-    $before = $stmt;
-    $sub_stmt = $after = "";
-    for ($index = 0; $index < length $stmt; ++$index) {
-        if ((substr($stmt, $index, 2) =~ /IF/i)
-         && ($index < 2 || (substr($stmt, $index - 2, 2) !~ /EL/i))) {
-            push @if, $index;
-            printf "Seen IF at position %d depth %d\n", $index, scalar @if;
+    #my $stmt = shift;
+    $length = length $stmt;
+    
+    my ($i, $end, $wanted, $found, $clause);
+    my (@stages);
+    my $run_out = FALSE;
+    
+    $stmt =~ s/^\s*|\s*$//g;
+    printf "%d %s\n", __LINE__, "~" x 70;
+    print $stmt;
+    print "~" x 70, "\n";
+    
+    #  Scan forwards until we find a closing FI.
+    #  Ignore any embedded IF .. FI constructs!
+    
+    for ($i = 2; $i < length($stmt) - 1; ++$i) {
+        #print substr $stmt, $i, 1;
+        if (substr ($stmt, $i, 2) =~ /IF/i) {
+            printf "%d Seen IF at position %d (%d)\n", __LINE__, $i, scalar @if;
+            push @if, $i;
         }
-        elsif (substr($stmt, $index, 2) =~ /FI/i) {
-            printf "Seen FI at position %d depth %d\n", $index, scalar @if;
+        if (substr ($stmt, $i, 4) =~ /ELIF/i) {
+            printf "%d Skipping ELIF at %d  which would cause false positive\n", __LINE__, $i;
+            $i += 4;
+        }
+        elsif (substr ($stmt, $i, 2) =~ /FI/i) {
+            printf "%d Seen FI at position %d (%d)\n", __LINE__, $i, scalar @if;
             if (@if < 1) {
-                die "FI without IF";
-            }
-            elsif (@if == 1) {
-                $begin = pop @if;
-                $length = $index + 1 - $begin;
-                $sub_stmt = substr $stmt, $begin + 2, $length - 3;
-                $before = substr $stmt, 0, $begin;
-                $after = substr $stmt, $begin + $length + 1;
-                printf "Before:\n'%s'\n", $before;
-                printf "Sub-statement:\n'%s'\n", $sub_stmt;
-                printf "After:\n'%s'\n", $after;
+                #my $old_i = pop @if;
+                printf "%d FI at %d closes IF at beginning\n", __LINE__, $i;
+                $wanted = substr $stmt, 2, $i - 2;
+                $after  = substr $stmt, $i + 2;
+                #printf "%d WANTED:'%s'\n", __LINE__, $wanted;
+                #printf "%d AFTER :'%s'\n", __LINE__, $after;
             }
             else {
-                pop @if;
+                my $old_i = pop @if;
+                printf "%d FI at %d goes with IF at %d\n", __LINE__, $i, $old_i;
             };
         };
     };
     
-    print "-" x 70, "\n";
+    #  Now $wanted contains everything after IF to before FI
+    #      $after contains everything after FI
     
-    #  Search for THEN which marks end of test expression
-    #  (or possibly ELSE)
+    printf "%d WANTED:'%s'\n", __LINE__, $wanted;
+    printf "%d AFTER :'%s'\n", __LINE__, $after;
+
+    #printf "%d %s\n", __LINE__, "-" x 70;
     
-    undef $begin;
-    for ($index = 0; $index < length $sub_stmt; ++$index) {
-        if (substr($sub_stmt, $index, 4) =~ /THEN/i) {
-            printf "Seen THEN at position %d\n", $index;
-            $begin = $index;
-        }
-        elsif (substr($sub_stmt, $index, 4) =~ /ELSE/i) {
-            printf "Seen ELSE at position %d\n", $index;
-            $begin = $index;
-        };
-        last if $begin;
-    };
-    
-    if ($begin) {
-        $test = substr $sub_stmt, 0, $begin;
-        $then = substr $sub_stmt, $begin;
+    #  Scan forwards until we find an ELIF or ELSE
+
+    my $pass = 0;
+    $else = "";
+    while (!$run_out) {
+        undef $found;
         
-        printf "IF test:\n'%s'\n", $test;
-        printf "THEN and ELSE:\n'%s'\n", $then;
-        printf "After:\n'%s'\n", $after;
-    }
-    else {
-        die "IF without THEN";
-    };
-    
-    print "-" x 70, "\n";
-    
-    #  Now separate the THEN part from the ELSE part, treating any nested
-    #  IF ... FI structure as an atom
-    
-    @if = ();
-    undef $begin;
-    for ($index = 0; $index < length $then; ++$index) {
-        if ((substr($then, $index, 2) =~ /IF/i)
-        #  Make sure this IF is not part of an ELIF
-         && ($index < 2 || (substr($then, $index - 2, 2) !~ /EL/i))) {
-            push @if, $index;
-            printf "Seen IF at position %d depth %d\n", $index, scalar @if;
+        printf "%d Scanning for ELIF|ELSE  (pass %d)\n", __LINE__, ++$pass;
+        print "$wanted\n";
+        $wanted =~ s/^\s*|\s*$//g;
+        @if = ();
+        if ($wanted =~ /^\s*$/m) {
+            printf "Nothing but whitespace!\n";
+            $run_out = TRUE;
         }
-        elsif (substr($then, $index, 2) =~ /FI/i) {
-            printf "Seen FI at position %d depth %d\n", $index, scalar @if;
-            if (@if < 1) {
-                die "FI without IF";
+        else {
+            printf "Not just whitespace: '%s'\n", $wanted;
+        };
+
+        for ($i = 0; $i < length($wanted) - 1; ++$i) {
+            $run_out = TRUE if $i >= length($wanted) - 2;
+            $run_out = TRUE if $wanted =~ /^\s*$/;
+                    
+            printf "%d *****  RUN OUT!  *****\n", __LINE__ if $run_out;
+            if (substr($wanted, $i, 2) =~ /IF/i) {
+                #printf "%d Seen IF at position %d (%d)\n", __LINE__, $i, scalar @if;
+                #print "${RED}$wanted${GREY}\n";
+                #print "$wanted\n";
+                if ($i > 1 && substr($wanted, $i - 2, 4) =~ /ELIF/i) {
+                    #printf "%d ... but it's part of ELIF\n", __LINE__;
+                }
+                else {
+                    push @if, $i;
+                };
+            }
+            elsif ($i > 0 && substr ($wanted, $i, 4) =~ /ELIF/i) {
+                if (@if) {
+                    #printf "%d Ignoring ELIF at %d, not ours.\n", __LINE__, $i;
+                }
+                else {
+                    #printf "%d Seen ELIF at %d.\n", __LINE__, $i;
+                    $found = "ELIF";
+                    $begin = $i;
+                    last;
+                };
+            }
+            elsif ($i > 0 && substr ($wanted, $i, 4) =~ /ELSE/i) {
+                if (@if) {
+                    #printf "%d Ignoring ELSE at %d, not ours.\n", __LINE__, $i;
+                }
+                else {
+                    #printf "%d Seen ELSE at %d.\n", __LINE__, $i;
+                    $found = "ELSE";
+                    $begin = $i;
+                    last;
+                };
+            }
+            elsif (substr ($wanted, $i, 2) =~ /FI/i) {
+                #printf "%d Seen FI at position %d (%d)\n", __LINE__, $i, scalar @if;
+                if (@if < 1) {
+                }
+                else {
+                    my $old_i = pop @if;
+                    #printf "%d FI at %d goes with IF at %d\n", __LINE__, $i, $old_i;
+                };
+            };
+        };
+        
+        if ($found) {
+            #printf "%d Found '%s' at %d\n", __LINE__, $found, $begin;
+            $clause = substr $wanted, 0, $begin;
+            $wanted = substr $wanted, $begin;
+            #printf "Clause: '${GREEN}%s${GREY}'\nAfter:  '${YELLOW}%s${GREY}'\n", $clause, $wanted;
+            #printf "Clause: '%s'\nAfter:  '%s'\n", $clause, $wanted;
+
+            if ($found =~ /IF/) {
+                #printf "%d After pass %d we have '%s'\n", __LINE__, $pass, $clause;
+                #printf "%d We have a test and THEN clause!\n", __LINE__;
+                #printf "'%s'\n", $clause;
+                if ($clause =~ /^([\S\s]*?)THEN([\S\s]*)$/i) {
+                    $test = $1;
+                    $then = $2;
+                    $test =~ s/^.*?IF\s*//;
+                    $test =~ s/^\s*|\s*$//g;
+                    $then =~ s/^\s*|\s*$//g;
+                    #printf "Test: '%s'\nThen: '%s'\n", $test, $then;
+                    push @stages, {"test" => $test, "then" => $then};
+                    push @test, $test;
+                    push @then, $then;
+                }
+                else {
+                    die "No THEN";
+                };
             }
             else {
-                pop @if;
+                printf "%d After pass %d we have '%s'\n", __LINE__, $pass, $clause;
+                #die "Stopping for investigation";
+                if ($clause =~ /^([\S\s]*?)THEN([\S\s]*)$/i) {
+                    $test = $1;
+                    $then = $2;
+                    $test =~ s/^.*IF//;
+                    $test =~ s/^\s*|\s*$//g;
+                    $then =~ s/^\s*|\s*$//g;
+                    printf "Test: '%s'\nThen: '%s'\n", $test, $then;
+                    push @stages, {"test" => $test, "then" => $then};
+                    push @test, $test;
+                    push @then, $then;
+                }
+                else {
+                    die "No THEN";
+                };
+            };
+            undef $found;
+        };
+        
+        if ($run_out) {
+            #printf "%d After pass %d we are left with '%s'\n", __LINE__, $pass, $wanted;
+            if ($wanted =~ /^([\S\s]*?)THEN([\S\s]*)$/i) {
+                #print "There is a THEN in it!\n";
+                $test = $1;
+                $then = $2;
+                $test =~ s/^.*IF//;
+                $test =~ s/^\s*|\s*$//g;
+                $then =~ s/^\s*|\s*$//g;
+                #printf "Test: '%s'\nThen: '%s'\n", $test, $then;
+                push @stages, {"test" => $test, "then" => $then};
+                push @test, $test;
+                push @then, $then;
+            }
+            elsif ($wanted =~ /ELSE([\S\s]*)$/i) {
+                $else = $1;
+                $else =~ s/^\s*|\s*$//g;
+                #push @stages, {"else" => $else};
             };
         };
         
-        if (!@if) {
-            if (substr($then, $index, 4) =~ /ELSE/i) {
-                printf "Seen ELSE at position %d\n", $index;
-                printf "%s\n%s^\n", $then, " " x $index;
-                $begin = $index;
-            };
-        };
+        $wanted =~ s/^\s*|\s*$//g;
     };
+
+#     print "~" x 70, "\n";
+#     print Dumper \@stages;
+#     print "~" x 70, "\n";
     
-    $test =~ s/^\s*|\s*$//g;
-    push @test, $test;
-
-    if (defined $begin) {
-        $else = substr $then, $begin;
-        $then = substr $then, 0, $begin;
-        
-        print "THEN clause:\n'$then'\n";
-        print "ELSE clause:\n'$else'\n";
-    }
-    else {
-        print "No ELSE seen.\n";
-        $then =~ s/^\s*THEN\s*|\s*$//gi;
-        $else = "";
-        print "THEN clause:\n'$then'\n";
-    };
+    ###########################  END  IMPORTED CODE  ###########################
     
-    #  Now our THEN clause may contain one or more subclauses of the form
-    #  ELIF test
-    #  THEN statements
-    #  We build up a list of tests and the corresponding THEN clauses,
-    #  and run the tests in turn.  If any is true, we execute the code in
-    #  its corresponding THEN clause and JMP to the address of the FI.
-    #  If none are true, we execute the ELSE clause and fall through to
-    #  the same address.
     
-    #$test =~ s/^\s*|\s*$//g;
-    #push @test, $test;
-
-    while ($then =~ /ELIF/i) {
-        undef $begin;
-        for ($index = 0; $index < length $then; ++$index) {
-            if (substr($then, $index, 4) =~ /ELIF/i) {
-                $begin = $index;
-                printf "Seen ELIF at position %d\n", $index;
-                $begin = $index;
-            };
-            last if $begin;
-        };
-        $sub_stmt = substr $then, 0, $begin;
-        printf "THEN clause:\n'%s'\n", $sub_stmt;
-        $sub_stmt =~ s/^\s*THEN\s*|\s*$//gi;
-        push @then, new Stmt($sub_stmt);
-        $then = substr $then, $begin;
-        printf "Rest of THEN/ELIF:\n'%s'\n", $then;
-        
-        undef $begin;
-        for ($index = 0; $index < length $then; ++$index) {
-            #$char = substr $expr, $index, 1;
-            if (substr($then, $index, 4) =~ /THEN/i) {
-                printf "Seen THEN at position %d\n", $index;
-                $begin = $index;
-            };
-            last if $begin;
-        };
-
-        if (defined $begin) {
-            $test = substr $then, 0, $begin;
-            $test =~ s/^\s*ELIF\s*|\s*$//gi;
-            printf "ELIF test:\n'%s'\n", $test;
-            push @test, $test;
-            $then = substr $then, $begin;
-        };
-    };
-    $then //= "";
-    $then =~ s/^\s*THEN\s*|\s*$//gi;
-    push @then, new Stmt($then);
-
-    $else //= "";
-    $else =~ s/^\s*ELSE\s*|\s*$//gi;
-
     @if = ();
-    
-    my ($i, $new_expr);
-    for ($i = 0; $i < @test; ++$i) {
-        printf "IF/ELIF [%d] test: '%s'\n", $i, $test[$i];
-        printf "THEN [%d] clause:\n'%s'\n", $i, $then[$i];
+    my ($new_expr);
+    for ($i = 0; $i < @stages; ++$i) {
+        #printf "%d IF/ELIF [%d] test: '%s'\n", __LINE__, $i, $stages[$i]{"test"};
+        #printf "%d THEN [%d] clause:\n'%s'\n", __LINE__, $i, $stages[$i]{"then"};
         
         #push @if, { "test" => new BoolExpr($test[$i]), "then" => $then[$i] };
-        $new_expr = new BoolExpr($test[$i]);
+        $new_expr = new BoolExpr($stages[$i]{"test"});
         $new_expr->resolve_rel;
         
-        push @if, { "test" => $new_expr, "then" => $then[$i] };
+        push @if, { "test" => $new_expr, "then" => new Stmt($stages[$i]{"then"}) };
     };
-    printf "ELSE clause:\n'%s'\n", $else;
+    printf "%d ELSE clause:\n'%s'\n", __LINE__, $else;
     $else = new Stmt($else);
     
-    print "=" x 70, "\n";
+    printf "%d %s\n", __LINE__, "=" x 70;
     print "\@test = ",Dumper \@test;
     print "\@then = ", Dumper \@then;
     print "\$else = ", Dumper \$else;
@@ -2791,6 +3410,42 @@ sub if {
     print "After:\n$after\n";
     print "-" x 70, "\n";
     
+    print ">" x 70, "\n";
+    print Dumper \$self;
+    print "<" x 70, "\n";
+
+    ($self, $after);
+};
+
+sub entry {
+    my ($index, $begin, $length, $assign, $cmd, $value, $entry, $after);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(ENTRY)\s*(.*)$//m) {
+        $cmd = $1;
+        $entry = $2;
+        $entry =~ s/^\s*|\s*$//g;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        printf "%d Command: '%s'\n", __LINE__, $cmd;
+        printf "Expression: '%s'\n", $entry;
+        printf "After: '%s'\n", $after;
+
+        if ($ENTRY_PTS{$entry}++) {
+            die "Duplicate entry point '$entry'";
+        };
+        push @ENTRY_PTS, $entry;
+
+        my $cmd = { "_cmd" => $cmd,
+                    "_expr" => $entry,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "command" };
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    };
+    
     ($self, $after);
 };
 
@@ -2804,8 +3459,8 @@ sub say {
     if ($stmt =~ s/\b(SAY\S*)\s*(.*)$//m) {
         $cmd = $1;
         $items = $2;
-        print "~" x 70, "\n";
-        printf "Parsing '%s' command '%s'\n", $cmd, $items;
+        #print "~" x 70, "\n";
+        #printf "%d Parsing '%s' command '%s'\n", __LINE__, $cmd, $items;
         while ($items =~ /^(.*?)"(.*?)(?<!")"(?!")(.*)$/) {
 #                               | |      |  |  |
 #         opening speech mark --' |      |  |  |
@@ -2819,16 +3474,16 @@ sub say {
             $after =~ s/^\s*|\s*$//g;
             #printf "Before: '%s'\nPhrase: '%s'\nAfter : '%s'\n", $before, $phrase, $after;
             if ($before) {
-                printf "Before: '%s'\n", $before;
+                #printf "Before: '%s'\n", $before;
                 push @items, new NumExpr($before);
             };
-            printf "Phrase: '%s'\n", $phrase;
+            #printf "Phrase: '%s'\n", $phrase;
             push @items, $phrase if $phrase;
             
             $items = $after;
         };
-        print "~" x 70, "\n";
-        print "Done parsing.\n";
+        #print "~" x 70, "\n";
+        #print "Done parsing.\n";
         
         if ($after = $items) {
             printf "After : '%s'\n", $after;
@@ -2845,20 +3500,181 @@ sub say {
     ($self, $stmt);
 };
 
-sub one_arg {
+sub defproc {
+    my ($index, $begin, $length, $assign, $cmd, $value, $proc_name, $after);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(DEFPROC)(\S+)\s*$//m) {
+        $cmd = $1;
+        $proc_name = $2;
+        $proc_name =~ s/^\s*|\s*$//g;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        #printf "%d Command: '%s'\n", __LINE__, $cmd;
+        #printf "Expression: '%s'\n", $proc_name;
+        #printf "After: '%s'\n", $after;
+
+        if ($ENTRY_PTS{$proc_name}++) {
+            die "Duplicate entry point '$proc_name'";
+        };
+        push @ENTRY_PTS, $proc_name;
+
+        my $cmd = { "_cmd" => $cmd,
+                    "_expr" => $proc_name,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "defproc" };
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    }
+    else {
+        die "Syntax error in DEFPROC: '$stmt'";
+    };
+    
+    ($self, $after);
+};
+
+sub proc {
+    my ($index, $begin, $length, $assign, $cmd, $value, $proc_name, $after);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(PROC)(\S+)\s*$//m) {
+        $cmd = $1;
+        $proc_name = $2;
+        $proc_name =~ s/^\s*|\s*$//g;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        #printf "%d Command: '%s'\n", __LINE__, $cmd;
+        #printf "Expression: '%s'\n", $proc_name;
+        #printf "After: '%s'\n", $after;
+
+        my $cmd = { "_cmd" => $cmd,
+                    "_expr" => $proc_name,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "proc" };
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    }
+    else {
+        die "Syntax error in PROC call: '$stmt'";
+    };
+    
+    ($self, $after);
+};
+
+sub crease {
+    my ($index, $begin, $length, $assign, $cmd, $value, $expr, $after);
+    my ($rest_of_line, $var_name, $limit);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(INCREASE|DECREASE|DOUBLE|HALVE)\s*(.*)$//m) {
+        $cmd = $1;
+        $rest_of_line = $2;
+        $rest_of_line =~ s/^\s*|\s*$//g;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        if ($rest_of_line =~ /([A-Za-z`_][A-Za-z0-9`_]*)\s+(\S.*)/) {
+            printf "%d limit: '%s'\n", __LINE__, $rest_of_line;
+            $var_name = $1;
+            $limit = $2;
+        }
+        elsif ($rest_of_line =~ /([A-Za-z`_][A-Za-z0-9`_]*)/) {
+            printf "%d no limit: '%s'\n", __LINE__, $rest_of_line;
+            $var_name = $1;
+        }
+        else {
+            die "Don't know what to do with '$stmt'.";
+        };
+        
+        #printf "%d Command: '%s'\n", __LINE__, $cmd;
+        #printf "Expression: '%s'\n", $rest_of_line;
+        #printf "After: '%s'\n", $after;
+
+        if ($var_name =~ /^($KNOWN_VARS)$/i) {
+            $var_name = $KNOWN_VARS{$var_name};
+        #}
+        #elsif ($var_name =~ /^($STATE_BYTE)$/i) {
+        #    my $offset = $STATE_BYTE{$var_name};
+        #    $var_name = sprintf "state_bytes + %d", $offset;
+        };
+
+        #  Instead of a modulus operation ending with TXA followed by STA, just
+        #  perform a division -- the remainder will be in X anyway, so we can
+        #  use STX to store it directly over the original value
+        
+        my $cmd = { "_cmd" => $cmd,
+                    "_rest_of_line" => $rest_of_line,
+                    "_varname" => $var_name,
+                    "_limit" => $limit,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "crease" };
+        if ($limit) {
+            $cmd->{"_num_expr"} = new NumExpr("$var_name / $limit");
+        };
+                    
+        #print "~" x 70, "\n";
+        #print Dumper $cmd;
+        #die "Stopping to investigate";
+
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    }
+    else {
+        die "Syntax error in INCREASE/DECREASE: '$stmt'";
+    };
+    
+    ($self, $after);
+};
+
+sub comment {
     my ($index, $begin, $length, $assign, $cmd, $value, $expr, $after);
     
     my $self = shift;
     my $stmt = shift;
     
-    if ($stmt =~ s/\b(MESSAGE|DROP|DESTROY)\s*(.*)$//m) {
+    if ($stmt =~ s/\b(REM)(.*)$//m) {
         $cmd = $1;
         $expr = $2;
         $expr =~ s/^\s*|\s*$//g;
         $after = $stmt;
         $after =~ s/^\s*|\s*$//g;
         
-        printf "Command: '%s'\n", $cmd;
+        #printf "%d Command: '%s'\n", __LINE__, $cmd;
+        #printf "Expression: '%s'\n", $expr;
+        #printf "After: '%s'\n", $after;
+
+        my $cmd = { "_cmd" => $cmd,
+                    "_expr" => $expr,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "comment" };
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    }
+    else {
+        die "Syntax error: '$stmt'";
+    };
+    
+    ($self, $after);
+};
+
+sub one_arg {
+    my ($index, $begin, $length, $assign, $cmd, $value, $expr, $after);
+    
+    my $self = shift;
+    my $stmt = shift;
+    
+    if ($stmt =~ s/\b(MESSAGE|DROP|DESTROY|LIVE|DIE|UNSET|SET|CLEAR)\s*(.*)$//m) {
+        $cmd = $1;
+        $expr = $2;
+        $expr =~ s/^\s*|\s*$//g;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        printf "%d Command: '%s'\n", __LINE__, $cmd;
         printf "Expression: '%s'\n", $expr;
         printf "After: '%s'\n", $after;
 
@@ -2884,14 +3700,25 @@ sub no_arg {
         $after = $stmt;
         $after =~ s/^\s*|\s*$//g;
         
-        printf "Command: '%s'\n", $cmd;
+        printf "%d Command: '%s'\n", __LINE__, $cmd;
         printf "After: '%s'\n", $after;
         my $cmd = { "_cmd" => $cmd,
                     "_serial" => ++$Stmt::stmt_serial,
                     "_type" => "command" };
         $self->append(bless ($cmd, "Stmt::Simple"));
     };
-    
+    if ($stmt =~ s/\b(EXIT|ENDPROC)\b.*$//m) {
+        $cmd = $1;
+        $after = $stmt;
+        $after =~ s/^\s*|\s*$//g;
+        
+        #printf "%d Command: '%s'\n", __LINE__, $cmd;
+        #printf "After: '%s'\n", $after;
+        my $cmd = { "_cmd" => $cmd,
+                    "_serial" => ++$Stmt::stmt_serial,
+                    "_type" => "command" };
+        $self->append(bless ($cmd, "Stmt::Simple"));
+    };
     ($self, $after);
 };
 
@@ -2907,7 +3734,15 @@ sub assign {
         $expr =~ s/^\s*|\s*$//g;
         $after = $stmt;
         $after =~ s/^\s*|\s*$//g;
-        
+
+        if ($var_name =~ /^($KNOWN_VARS)$/i) {
+            $var_name = $KNOWN_VARS{$var_name};
+        }
+        elsif ($var_name =~ /^($STATE_BYTE)$/i) {
+            my $offset = $STATE_BYTE{$var_name};
+            $var_name = sprintf "state_bytes + %d", $offset;
+        };
+
         printf "Variable: '%s'\n", $var_name;
         printf "Expression: '%s'\n", $expr;
         printf "After: '%s'\n", $after;
@@ -2944,6 +3779,10 @@ sub recurse {
         $t = $substmt->{"_type"};
         #printf "${indent}\\ Sub-statement %d (%s) is of type '%s'.\n", $i, $r, $t;
         if ($r =~ /Stmt::If/i) {
+            #$substmt->recurse($depth + 1);
+            $substmt->recurse($depth);
+        }
+        elsif ($r =~ /Stmt::Repeat/i) {
             #$substmt->recurse($depth + 1);
             $substmt->recurse($depth);
         }
@@ -3014,6 +3853,11 @@ sub new {
     bless $self, $class;                #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
 };
 
+sub no_else {
+    my $self = shift;
+    return !@{$self->{"_else"}->{"_substmts"}};
+};
+
 sub recurse {
     my $self = shift;
     my $depth = shift;
@@ -3056,7 +3900,22 @@ sub recurse {
         #printf "${indent}\\ Then (%d,%d) is of type '%s'.\n", $self->serial, $i, ref $then;
         printf "${indent}.then%d_%d\n", $self->serial, $i;
         $then->recurse($depth + 1);
-        printf "${indent}    JMP fi%d\n", $self->serial;
+        
+        #print Dumper $self->{"_else"}->{"_substmts"};
+        #if (scalar @{$self->{"_else"}->{"_substmts"}}) {
+        #    printf "${indent}\\ else has something (%s)\n", scalar @{$self->{"_else"}->{"_substmts"}};
+        #}
+        #else {
+        #    printf "${indent}\\ no else (%s)\n", scalar @{$self->{"_else"}->{"_substmts"}};
+        #};
+        
+        #if ($i == @tests - 1 && !@{$self->{"_else"}->{"_substmts"}})
+        if ($i == @tests - 1 && $self->no_else) {
+            printf "${indent}    \\ last test, no else; no need for jump to fi\n";
+        }
+        else {
+            printf "${indent}    JMP fi%d\n", $self->serial;
+        };
     };
     
     $else = $self->{"_else"};
@@ -3108,8 +3967,103 @@ sub recurse {
             else {
                 printf "${indent}LDA %s\\ ??\n", $expr;
             };
+            die "Stopping for investigation.";
         };
-        printf "${indent}STA %s\n", $varname;
+
+        printf "${indent}STA %s \\ %d\n", $varname, __LINE__;
+    }
+    elsif ($t =~ /defproc/i) {
+        my $cmd = $self->{"_cmd"};
+        my $proc_name = $self->{"_expr"};
+        #printf "${indent}\\ %d %s %s\n", __LINE__, $cmd, $proc_name;
+        printf "${indent}.real_%s \\ %s%s\n", $proc_name, $cmd, $proc_name;
+        #printf "${indent}\n";
+#         if ($ENTRY_PTS{$proc_name}++) {
+#             die "Duplicate entry point '$proc_name'";
+#         };
+#         push @ENTRY_PTS, $proc_name;
+    }
+    elsif ($t =~ /entry/i) {
+        my $cmd = $self->{"_cmd"};
+        my $expr = $self->{"_expr"};
+        if ($expr =~ /^\s*([A-Za-z_`][A-Za-z0-9_`]*)\s*$/) {
+            my $entry = $1;
+            printf "${indent}.real_%s \\ ENTRY POINT '%s'\n", $entry, $entry;
+            #if ($ENTRY_PTS{$entry}++) {
+            #    die "Duplicate entry point '$entry'";
+            #};
+            #push @ENTRY_PTS, $entry;
+        }
+        else {
+            die "Dodgy character in entry point name '$expr'";
+        };
+    }
+    elsif ($t =~ /comment/i) {
+        my $cmd = $self->{"_cmd"};
+        my $comment = $self->{"_expr"};
+        unless (FALSE) {
+            printf "${indent}\\ %s\n", $comment;
+        };
+    }
+    elsif ($t =~ /crease/i) {
+        my $cmd = $self->{"_cmd"};
+        my $var_name = $self->{"_varname"};
+        my $limit = $self->{"_limit"};
+        
+        # Resolve state byte
+        if ($var_name =~ /^($STATE_BYTE)$/i) {
+            my $offset = $STATE_BYTE{$var_name};
+            $var_name = sprintf "state_bytes + %d", $offset;
+        };
+
+        if ($cmd =~ /inc/i) {
+            #printf "${indent}\\ %d INCREASE %s\n", __LINE__, $var_name;
+            printf "${indent}INC %s\n", $var_name;
+            if ($limit) {
+                #printf "${indent}\\ LIMIT %d\n", $limit;
+                $GETS = 0;  #  don't push stack
+                $STACK_DEPTH = 0;
+                $self->{"_num_expr"}->recurse($depth);
+                printf "${indent}STX %s \\ %d\n", $var_name, __LINE__;
+            };
+        }
+        elsif ($cmd =~ /bl/i) {
+            printf "${indent}ASL %s\n", $var_name;
+        }
+        elsif ($cmd =~ /h/i) {
+            printf "${indent}LSR %s\n", $var_name;
+        }
+        else {
+            #printf "${indent}\\ %d DECREASE %s\n", __LINE__, $var_name;
+            printf "${indent}DEC %s\n", $var_name;
+        };
+                
+        #die "Stopping for investigation";
+##########  BORROWED CODE  ##########
+#     if ($t =~ /assign/i) {
+#         my $varname = $self->{"_varname"};
+#         my $expr = $self->{"_expr"};
+#         if (ref $expr) {
+#             $GETS = 0;
+#             $expr->recurse($depth);
+#         }
+#         else {
+#             if ($expr =~ /^(\d+$|&[0-9a-fA-F]+)$/) {
+#                 printf "${indent}LDA #%s\n", $expr;
+#             }
+#             else {
+#                 printf "${indent}LDA %s\\ ??\n", $expr;
+#             };
+#         };
+# 
+#         printf "${indent}STA %s \\ %d\n", $varname, __LINE__;
+##########  ENDS  ##########
+    }
+    elsif ($t =~ /proc/i) {
+        my $cmd = $self->{"_cmd"};
+        my $proc_name = $self->{"_expr"};
+        #printf "${indent}\\ %d %s %s\n", __LINE__, $cmd, $proc_name;
+        printf "${indent}JSR real_%s \\ %s%s\n", $proc_name, $cmd, $proc_name;
     }
     elsif ($t =~ /command/i) {
         my $cmd = $self->{"_cmd"};
@@ -3117,6 +4071,29 @@ sub recurse {
         
         if ($cmd =~ /\b(NEWLINE|NL)\b/i) {
             printf "${indent}JSR osnewl\n";
+        }
+        if ($cmd =~ /\b(EXIT|ENDPROC)\b/i) {
+            printf "${indent}RTS \\ %s\n", $cmd;
+        }
+        elsif ($cmd =~ /\bENTRY\b/i) {
+            if (ref $expr) {
+                die "Expression where scalar should be?";
+            }
+            else {
+                if ($expr =~ /^\s*([A-Za-z_`][A-Za-z0-9_`]*)\s*$/) {
+                    my $entry = $1;
+                    #printf "${indent}.%s\n", $entry;
+                    printf "${indent}.real_%s \\ ENTRY POINT '%s'\n", $entry, $entry;
+                    #if ($ENTRY_PTS{$entry}++) {
+                    #    die "Duplicate entry point '$entry'";
+                    #};
+                    #push @ENTRY_PTS, $entry;
+                }
+                else {
+                    die "Dodgy character in entry point name '$expr'";
+                };
+            };
+            #print "${indent}\n";
         }
         elsif ($cmd =~ /\bMESSAGE\b/i) {
             if (ref $expr) {
@@ -3142,6 +4119,7 @@ sub recurse {
                 print "${indent}TAX\n";
             }
             else {
+                die "scalar where expression should be? '$expr'";
                 if ($expr =~ /^(\d+$|&[0-9a-fA-F]+)$/) {
                     printf "${indent}LDX #%s\n", $expr;
                 }
@@ -3166,6 +4144,7 @@ sub recurse {
                 #};
             }
             else {
+                die "scalar where expression should be? '$expr'";
                 if ($expr =~ /^(\d+$|&[0-9a-fA-F]+)$/) {
                     printf "${indent}LDX #%s\n", $expr;
                 }
@@ -3173,12 +4152,66 @@ sub recurse {
                     printf "${indent}LDX %s\\ ??\n", $expr;
                 };
             };
-            print "${indent}LDA #0\n";
+            print "${indent}LDA bas_var_R\n";
             print "${indent}STA object_loc,X\n";
             #print "${indent}\n";
         }
+        elsif ($cmd =~ /\bLIVE\b/i) {
+            if (ref $expr) {
+                #printf "${indent}\\ %d \$expr='%s' scalar value? '%s'\n", __LINE__, ref($expr), $expr->value_is_scalar ? "scalar" : ref $expr;
+                $GETS = 0;
+                $expr->recurse($depth);
+            }
+            else {
+                die "scalar where expression should be? '$expr'";
+                if ($expr =~ /^(\d+$|&[0-9a-fA-F]+)$/) {
+                    printf "${indent}LDA #%s\n", $expr;
+                }
+                else {
+                    printf "${indent}LDA %s\\ ??\n", $expr;
+                };
+            };
+            print "${indent}JSR cmd_live\n";
+        }
+        elsif ($cmd =~ /\bDIE\b/i) {
+            if (ref $expr) {
+                #printf "${indent}\\ %d \$expr='%s' scalar value? '%s'\n", __LINE__, ref($expr), $expr->value_is_scalar ? "scalar" : ref $expr;
+                $GETS = 0;
+                $expr->recurse($depth);
+            }
+            else {
+                die "scalar where expression should be? '$expr'";
+                if ($expr =~ /^(\d+$|&[0-9a-fA-F]+)$/) {
+                    printf "${indent}LDA #%s\n", $expr;
+                }
+                else {
+                    printf "${indent}LDA %s\\ ??\n", $expr;
+                };
+            };
+            print "${indent}JSR cmd_die\n";
+        }
+        elsif ($cmd =~ /\bCLEAR|UNSET\b/i) {
+            if (ref $expr) {
+                $GETS = 0;
+                $expr->recurse($depth);
+            }
+            else {
+                die "scalar where expression should be? '$expr'";
+            };
+            print "${indent}JSR real_clear_state_bit\n";
+        }
+        elsif ($cmd =~ /\bSET\b/i) {
+            if (ref $expr) {
+                $GETS = 0;
+                $expr->recurse($depth);
+            }
+            else {
+                die "scalar where expression should be? '$expr'";
+            };
+            print "${indent}JSR real_set_state_bit\n";
+        }
         else {
-            printf "${indent}\\ Command: '%s'\n", $cmd;
+            printf "${indent}\\ %d Unknown command: '%s'\n", __LINE__, $cmd;
             if ($expr) {
                 printf "${indent}\\ Expr: '%s'\n", $expr;
             };
@@ -3186,7 +4219,56 @@ sub recurse {
     }
     else {
         print "It's ??unknown?? type '$t'.\n";
+        die "Unknown expression?";
     };
+    
+    return $self;
+};
+
+1;                                      #  MAGIC - DO NOT TRY TO UNDERSTAND THIS
+
+#############################  STMT::REPEAT CLASS  #############################
+
+package Stmt::Repeat;
+use strict;
+
+require Exporter;
+use Data::Dumper;
+
+use constant { TRUE => "1", FALSE => "" };
+
+our @ISA = qw/Exporter Stmt/;
+
+sub recurse {
+    my $self = shift;
+    my $depth = shift;
+    my $indent = " " x (4 * $depth);
+    
+    my $loop = $self->{"_loop"};
+    my $test = $self->{"_test"};
+    
+    printf "${indent}\\ %d This is Stmt::Repeat::recurse\n", __LINE__;
+    #printf "%d %s\n", __LINE__, "=" x 70;
+    #print Dumper $self;
+    #print "=" x 70, "\n";
+
+    printf "${indent}.repeat%d\n", $self->serial;
+
+    $loop->recurse($depth + 1);
+    
+    printf "${indent}.until%d\n", $self->serial;
+    #printf "%d %s\n", __LINE__, "=" x 70;
+    #print Dumper $test;
+    #print "=" x 70, "\n";
+    
+    my $fd = sprintf("repeat%d", $self->serial);
+    my $td = sprintf("repeat%ddone", $self->serial);
+    #$test->recurse($depth, undef, undef, $fd, $td);
+    $test->recurse($depth, $fd, $td);
+
+    printf "${indent}.repeat%ddone\n", $self->serial;
+    
+    #die "Stopping short.";
     
     return $self;
 };
@@ -3215,7 +4297,7 @@ sub recurse {
     
     my ($i, $r, $t);
     
-    printf "${indent}\\ %d This is Stmt::Say::recurse.\n", __LINE__;
+    #printf "${indent}\\ %d This is Stmt::Say::recurse.\n", __LINE__;
 
     #print "~" x 70, "\n";
     #print Dumper $self;
@@ -3226,11 +4308,13 @@ sub recurse {
         #    printf "${indent}\\ Last one; command is '%s'\n", $cmd;;
         #};
         $r = ref $items[$i];
-        printf "${indent}\\ item %d of %d: '%s'\n", $i, scalar (@items), ($r || "plain string");
+        #printf "${indent}\\ %d item %d of %d: '%s'\n", __LINE__, $i, scalar (@items), ($r || "plain string");
         if ($r) {
             #printf "${indent}\\ numeric expression\n";
+            #  Don't push the stack
+            $GETS = $STACK_DEPTH = 0;
             $items[$i]->recurse($depth);
-            printf "${indent}JSR real_disp_dec\n";
+            printf "${indent}JSR disp_dec\n";
             if ($i == @items - 1) {
                 if ($cmd =~ /m/i) {
                     printf "${indent}\\ SAYMORE\n";
@@ -3272,12 +4356,14 @@ use Data::Dumper;
 use Getopt::Std;
 
 my %OPTIONS;
-getopts "dDq:", \%OPTIONS;
+getopts "dDi:o:q:", \%OPTIONS;
+my $INPUT_FILE = $OPTIONS{"i"};
+my $OUTPUT_FILE = $OPTIONS{"o"};
 
 #my ($term1, $rel, $term2);
 #my $nest_depth = 0;
 
-my @bracket;
+#my @bracket;
 
 #########################  BEGIN FUNCTION DEFINITIONS  #########################
 
@@ -3286,153 +4372,122 @@ my @bracket;
 my $expr = "ISSET umbrella_open AND (ROOM IS 15 OR VERB IS 13 OR turns MULTOF 10)";
 my $op;
 
+$expr = "A + (B + ( C * D ) - ( E * F ) ) + G";
+$expr = "((A + 5) IS B) OR ((C - D) GE (E * F))";
+$expr = "(A+B)";
+
+
 if (@ARGV) {
    $expr = shift;
    $op = shift;
    printf "Using '%s'.\n", $expr;
 };
 
-# my $bool_expr = new BoolExpr($expr);
-# print "=" x 70, "\n";
-# print Dumper $bool_expr;
-# print "=" x 70, "\n";
-# 
-# # $bool_expr->{_terms}[0]->resolve_rel;
-# $bool_expr->resolve_rel;
-# 
-# print "=" x 70, "\n";
-# print Dumper $bool_expr;
-# print "=" x 70, "\n";
-# 
-# exit;
-
-# my $num_rel = new NumRel($expr);
-# 
-# print "=" x 70, "\n";
-# 
-# my $r = ref $num_rel;
-# printf "\$num_rel = %s", Dumper $num_rel;
-# 
-# print "=" x 70, "\n";
-# 
-# $num_rel->recurse(0, "fi99", "then99", TRUE);
-# print "RTS\n";
-# 
-# exit;
-
-# my $num_lit = new NumLit($expr) || new NumVar($expr);
-# 
-# print "=" x 70, "\n";
-# 
-# printf "\$num_lit = %s", Dumper $num_lit;
-# 
-# print "=" x 70, "\n";
-# 
-# exit;
-
-#my (@tree, @bracket, @replacement);
-#my ($before, $sub_expr, $after, $type, $id);
-#my $i;
-
 my $after;
 
-my $prog = <<"_STOP_";
-IF VERB IS 39 THEN
-    SAY "You have scored " 5 * C13 " points out of a possible " C14 "."
-FI
-_STOP_
-
-#my $prog = <<"_STOP_";
-#C4 := 3
-#INCREASE C4 6
-#MESSAGE C4 + 58
-#_STOP_
-
-#my $prog = <<"_STOP_";
-#MESSAGE 68
-#ROOM := EXIT 11
-#SHOW_DESC := 1
-#_STOP_
-
 # my $prog = <<"_STOP_";
-# IF VERB GE 1 AND VERB LT 12 AND ( DEST IS 2 OR _ IS 4 OR _ IS 9 OR _ IS 11 ) THEN
-#     IF ISSET 5 THEN
-#         IF UNVISITED DEST THEN
-#             MESSAGE 56
-#             NEWLINE
-#         FI
-#     ELSE
-#         MESSAGE 68
-#         ROOM := EXIT 11
-#         SHOW_DESC := 1
-#     FI
+# IF VERB IS 39 THEN
+#     SAY "You have scored " 5 * C13 " points out of a possible " C14 "."
 # FI
 # _STOP_
 
-# my $prog = <<"_STOP_";
-# IF ISSET 5 THEN
-#     IF UNVISITED DEST THEN
-#         MESSAGE 56
-#         NEWLINE
-#     FI
-# FI
-# _STOP_
-
-# my $prog = <<"_STOP_";
-# IF ISSET 5 AND VERB GE 1 AND VERB LT 12 AND (ROOM IS 1 OR ROOM IS 3 OR (ROOM IS 7 AND UNSET 11) OR ROOM IS 8 OR ROOM IS 9) THEN
-#     MESSAGE 40
-# FI
-# _STOP_
-
-# my $prog = <<"_STOP_";
-# IF POZ count THEN
-#     MESSAGE 56
-#     NEWLINE
-#     turns := 17 % 6
-# FI
-# nextroom := ( 2 * 9 + 3 * 6 ) % 4
-# _STOP_
-
-# my $prog = <<"_STOP_";
-# MESSAGE 13
-# _STOP_
-
-# my $prog = <<"_STOP_";
-# IF VERB IS 24 THEN
-#     NEWLINE
-#     MESSAGE 24
-#     NORTH := 2
-# ELIF VERB IS 25 THEN
-#     MESSAGE 25
-# ELSE
-#     MESSAGE 26
-# FI
-# STUFF := 21
-# MESSAGE 15
-# NEWLINE
-# _STOP_
-
-# my $prog = <<"_STOP_";
-# TABLE TREASURE BYTE
-# 11 13 17 &13 23 &1D
-# ELBAT
+# Stuff for testing new Bracket object
+#
+# Bracket::init;
 # 
-# Z := 15
-# _STOP_
+# my $b = new Bracket($expr);
+# print Dumper $b;
+# 
+# # $expr = "B + C";
+# # $b = new Bracket($expr);
+# # print Dumper $b;
+# # 
+# # my $b1 = Bracket->get(0);
+# # print Dumper $b1;
+# 
+# Bracket->dump;
+# 
+# exit;
+
+# my $e = new NumExpr($expr);
+# print "=" x 70, "\n";
+# print Dumper $e;
+# #Bracket->dump;
+# exit;
+
+
 
 my $line;
-
-#while ($prog =~ /\S/) {
-#    if ($prog =~ s/^(.*?)$//m) {
-#        $line = $1;
-#        $prog =~ s/^\s*|\s*$//g;
-#        printf "Line: '%s'\n", $line;
-#        #printf "Rest of program: '%s'\n", $prog;
-#    };
-#};
-
 my $stmt;
-my @prog;
+my $prog;
+my ($section, $name, $value);
+
+$prog = <<"_STOP_";
+TABLE TREASURE BYTE
+  4  7  13
+ELBAT
+_STOP_
+
+if ($INPUT_FILE) {
+    if (-e $INPUT_FILE) {
+        $prog = "";
+        $section = "";
+        open FH, "<", $INPUT_FILE or die "Can't open $INPUT_FILE:$!";
+        while ($_ = <FH>) {
+            #print;
+            if (/\[\s*(\S.*?)\s*\]/) {
+                $section = $1;
+                print "---->  Section is now '$1'  <----\n";
+            }
+            else {
+                if (!$section || $section =~ /prog/i) {
+                    $prog .= $_;
+                }
+                else {
+                    if (/([A-Za-z`_][A-Za-z0-9`_]*)\s*=\s*(&[0-9A-Fa-f]+|[0-9]+)/) {
+                        $name = $1;
+                        $value = $2;
+                        if ($value =~ /^&([0-9A-Fa-f]+)/) {
+                            $value = hex $1;
+                        };
+                        if ($section =~ /^st.*bit/i) {
+                            $STATE_BIT{$name} = $value;
+                        }
+                        elsif ($section =~ /^st.*byte/i) {
+                            $STATE_BYTE{$name} = $value;
+                        }
+                        elsif ($section =~ /^const/i) {
+                            $CONST{$name} = $value;
+                        };
+                        printf "%s : '%s'='%s'\n", $section, $name, $value;
+                    };
+                };
+            };
+        };
+        close FH;
+    };
+};
+
+$CONST = uc join "|", keys %CONST;
+$STATE_BIT = join "|", keys %STATE_BIT;
+$STATE_BYTE = join "|", keys %STATE_BYTE;
+
+printf "Constants:   /%s/\n%s", $CONST, Dumper \%CONST;
+printf "State bits:  /%s/\n%s", $STATE_BIT, Dumper \%STATE_BIT;
+printf "State bytes: /%s/\n%s", $STATE_BYTE, Dumper \%STATE_BYTE;
+
+# exit;
+
+# if ($INPUT_FILE) {
+#     if (-e $INPUT_FILE) {
+#         $prog = "";
+#         open FH, "<", $INPUT_FILE or die "Can't open $INPUT_FILE:$!";
+#         while ($_ = <FH>) {
+#             $prog .= $_;
+#         };
+#         close FH;
+#     };
+# };
 
 #  Set up data tables
 Table->init;
@@ -3445,12 +4500,59 @@ print Dumper $stmt;
 
 print "=" x 70, "\n";
 
+if ($OUTPUT_FILE) {
+    open OUTPUT, ">", $OUTPUT_FILE or die "Could not write $OUTPUT_FILE: $!";
+    select OUTPUT;
+    
+    if (@ENTRY_PTS) {
+        foreach (@ENTRY_PTS) {
+            printf ".%s\n    JMP real_%s\n", $_, $_;
+        };
+        print "\n";
+    };
+
+    $stmt->recurse(0);
+    
+    if (@ENTRY_PTS) {
+        print "\n";
+        print "\\" x 76, "\n";
+        print "\n\\  ENTRY POINTS\n\n";
+        foreach (@ENTRY_PTS) {
+            printf "PRINT \"%s =\",~%s\n", $_, $_;
+        };
+        print "\n";
+    };
+
+    select STDOUT;
+    close OUTPUT;
+};
+
+# %ENTRY_PTS = ();
+# @ENTRY_PTS = ();
+
+if (@ENTRY_PTS) {
+    foreach (@ENTRY_PTS) {
+        printf ".%s\n    JMP real_%s\n", $_, $_;
+    };
+    print "\n";
+};
+
 $stmt->recurse(0);
 
-#print "~" x 70, "\n";
-#Table->dump;
-#my $re = Table->regexp;
-#printf "Regular expression to match table names is /%s/i\n", $re;
+if (@ENTRY_PTS) {
+    print "\n";
+    print "\\" x 76, "\n";
+    print "\n\\  ENTRY POINTS\n\n";
+    foreach (@ENTRY_PTS) {
+        printf "PRINT \"%s =\",~%s\n", $_, $_;
+    };
+    print "\n";
+};
+
+# print "~" x 70, "\n";
+# Table->dump;
+# my $re = Table->regexp;
+# printf "Regular expression to match table names is /%s/i\n", $re;
 
 exit;
 
