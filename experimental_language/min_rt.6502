@@ -127,9 +127,9 @@ ORG &7100
 ._dup2
     JSR _dup1
 ._dup1
-    LDA calc_stk,Y
-    STA calc_stk-2,Y
     DEY
+    LDA calc_stk+2,Y
+    STA calc_stk,Y
     RTS
     
 \  GET LEFT AND RIGHT OPERANDS FROM STACK
@@ -214,6 +214,10 @@ ORG &7100
     LDA remainder
     CLC
     ADC #48
+    CMP #58             \  see if we need to correct a hex digit
+    BCC _dds2
+    ADC #6              \  here, C=1 so we add one fewer than we need
+._dds2
     STA calc_stk,X
     INX
     \  See if working total has reached zero
@@ -304,7 +308,20 @@ ORG &7100
     SBC calc_stk,Y
     STA calc_stk,Y
     RTS
-    
+
+.twc16_lhs
+    LDX #lh_operand
+.twc16_zpX
+    LDY calc_sp
+    SEC                 \  so as to add 1 when we flip the bits
+    LDA #0
+    SBC 0,X
+    STA 0,X
+    LDA #0
+    SBC 1,X
+    STA 1,X
+    RTS
+
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 
@@ -370,6 +387,63 @@ ORG &7100
     PHA
     TYA
     PHA
+    JSR div_core
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  SIGNED DIVISION.  THIS WORKS BY KEEPING THE DIVIDEND AND DIVISOR POSITIVE
+\  AND USING neg_flag TO INDICATE WHAT IF ANYTHING NEEDS TO BE MADE NEGATIVE
+\  AFTER THE OPERATION IS COMPLETE.
+
+.signed_divide
+    LDA #0
+    STA remainder
+    STA remainder+1
+    TXA                 \  save X and Y on 6502 stack
+.signed_div_ext
+    PHA
+    TYA
+    PHA
+    LDA #0
+    STA neg_flag
+    LDA dividend+1
+    BPL positivify_divr
+    LDA #&C0            \  set bits 7 and 6
+    STA neg_flag
+    LDX #dividend       \  twos-complement it
+    JSR twc16_zpX
+.positivify_divr
+    LDA divisor+1
+    BPL _pos_dvr1
+    LDA neg_flag
+    EOR #&80
+    STA neg_flag
+    LDX #divisor        \  twos-complement it
+    JSR twc16_zpX
+._pos_dvr1
+    JSR div_core
+    BIT neg_flag
+    BPL _sd_quot_pos
+    LDX #quotient
+    JSR twc16_zpX       \  negativify the quotient
+._sd_quot_pos
+    BIT neg_flag
+    BVC _sd_rem_pos
+    LDX #remainder
+    JSR twc16_zpX       \  negativify the remainder
+._sd_rem_pos
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+    
+\  CORE DIVISION ROUTINE.  THIS TRASHES REGISTERS .....
+
+.div_core
     LDY#17              \  one more than we need
     BNE _divide_3       \  do an extra left shift on just bottom bits
 ._divide_1
@@ -393,11 +467,6 @@ ORG &7100
     BNE _divide_1
     \  dividend, dividend+1 now contain quotient
     \  dividend+2, dividend+3 contain remainder
-    
-    PLA                 \  retrieve Y and X from 6502 stack
-    TAY
-    PLA
-    TAX
     RTS
 
 ._code_end
