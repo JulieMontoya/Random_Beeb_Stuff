@@ -158,3 +158,22 @@ Location | Name       | Meaning
 &82-&83  | str_ptr    | String pointer
 &84-&85  | loop_ptr   | Pointer to FOR / REPEAT structure in loop stack
 
+# INTERNAL OPCODES
+
+Hex | Opcode | Hex | Opcode | Meaning
+----|--------|-----|--------|--------------------------------------
+&00 | RTS    | &80 | RTS    | RTS
+&01 | DUP    | &81 | USE    | Duplicate TOS or use immediate value
+&02 | RDW    | &82 | RDW    | Read word = BASIC ! operator
+&03 | WRW    | &83 | WRW    | Write word = BASIC ! operator
+&04 | PRN    | &84 | PRN    | Print Number
+&05 | VDU    | &85 | VDU    | Display char = VDU
+&06 | VDW    | &86 | VDW    | Display 2 chars = VDU Z%;
+&07 | MUL    | &87 | MUL    | Multiply = * operator
+&08 | DIV    | &88 | DIV    | Divide = / and DIV operators
+&09 | MOD    | &89 | MOD    | Modulus = MOD operator
+&0A | ADD    | &8A | ADD    | Add = + operator
+&0B | SUB    | &8B | SUB    | Subtract = - operator
+& |     | & |     | 
+
+
