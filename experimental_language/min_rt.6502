@@ -19,9 +19,13 @@ neg_flag = &7F
 
 code_ptr = &80
 str_ptr = &82
-for_ptr = &84
+for_ptr = &88
+
+code_ofs = &87
 
 osasci = &FFE3
+oswrch = &FFEE
+osword = &FFF1
 
 CLEAR &6F00,&7100
 ORG &7100
@@ -32,10 +36,10 @@ ORG &7100
     JMP real_disp_dec_stk
 .pushAX
     JMP real_pushAX
-.mult_stk
-    JMP real_mult_stk
-.div_stk
-    JMP real_div_stk
+.ext_mul_stk
+    JMP mul_stk
+.ext_div_stk
+    JMP div_stk
 .twc16
     JMP real_twc16
 .parse_num_stk
@@ -122,6 +126,9 @@ ORG &7100
     INY
     RTS
     
+\  DUP : DUPLICATE THE VALUE AT THE TOP OF THE CALCULATION STACK
+\
+
 .real_dup
     LDY calc_sp
     JSR _dup2
@@ -146,69 +153,21 @@ ORG &7100
     LDX #rh_operand
     JMP pull16
 
-\  MULTIPLY TWO NUMBERS AT TOP OF STACK
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+.vdu_stk
+    JSR get_rho
+    LDA rh_operand
+    JMP oswrch
     
-.real_mult_stk
-    JSR get_both
-    JSR real_mult16
-.return_stk
-    LDX #product
-    JMP push16
+.vdw_stk
+    JSR get_rho
+    LDA rh_operand
+    JSR oswrch
+    LDA rh_operand+1
+    JMP oswrch
 
-\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
-\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
-    
-.real_div_stk
-    JSR get_both
-    JSR signed_divide
-    \LDX #product
-    \JMP push16
-    JMP return_stk
-
-.real_mod_stk
-    JSR get_both
-    JSR signed_divide
-.return_ext
-    LDX #product+2      \  return remainder
-    JMP push16
-
-\  ADD TWO NUMBERS AT TOP OF STACK
-
-.add16_stk
-    CLC
-.adc16_stk
-    JSR get_both
-    LDX #0
-    JSR _adc_2
-    JMP return_stk
-._adc_2
-    JSR _adc_1
-._adc_1
-    LDA lh_operand,X
-    ADC rh_operand,X
-    STA lh_operand,X
-    INX
-    RTS
-    
-\  SUBTRACT NUMBER AT TOP OF CALCULATION STACK FROM NUMBER BELOW IT
-\  RETURN DIFFERENCE ON TOP OF CALCULATION STACK
-
-.sub16_stk
-    SEC
-.sbc16_stk
-    JSR get_both
-    LDX #0
-    JSR _sbc_2
-    JMP return_stk
-._sbc_2
-    JSR _sbc_1
-._sbc_1
-    LDA lh_operand,X
-    SBC rh_operand,X
-    STA lh_operand,X
-    INX
-    RTS
-    
 \  DISPLAY A DECIMAL NUMBER FROM TOP OF STACK
 
 .real_disp_dec_stk
@@ -331,7 +290,6 @@ ORG &7100
     LDA #255
     STA neg_flag
     BNE _pn_space       \  always branches
-    
     RTS
 
 \  STORE A WORD IN MEMORY -- ! OPERATOR / VARIABLE ASSIGNMENT
@@ -363,6 +321,38 @@ ORG &7100
     DEX
     STA calc_stk,X
     RTS
+
+\  READ A STRING FROM THE KEYBOARD -- INPUT $
+
+.input_str
+    LDY #0              \  create control block in ZP at str_ptr
+    STY str_ptr         \  byte 0 => address low
+    LDA #7
+    STA str_ptr+1       \  byte 1 => address high
+    LDA #255
+    STA str_ptr+2       \  byte 2 => maximum length
+    STA str_ptr+4       \  byte 4 => maximum ASCII code
+    LDA #32
+    STA str_ptr+3       \  byte 3 => minimum ASCII code
+    TYA
+    LDX #str_ptr
+    JSR osword          \  OSWORD 0 => INPUT
+    RTS                 \  with string at &700
+
+\  READ A NUMBER FROM THE KEYBOARD -- INPUT
+
+.input_num
+    JSR input_str
+    JMP parse_num_at_ptr
+    \  Now we have a numeric value on the stack
+    
+    
+    
+.input_cblk
+    EQUW &700           \  bytes 0-1 => address
+    EQUB 255            \  byte 2 => maximum length
+    EQUB 32             \  byte 3 => minimum ASCII code
+    EQUB 255            \  byte 4 => maximum ASCII code
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
@@ -542,8 +532,111 @@ ORG &7100
     \  dividend+2, dividend+3 contain remainder
     RTS
 
+\  MULTIPLY TWO NUMBERS AT TOP OF STACK
+    
+.mul_stk
+    JSR get_both
+.mul_in_place
+    JSR real_mult16
+.return_stk
+    LDX #product
+    JMP push16
+
+\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
+\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
+    
+.div_stk
+    JSR get_both
+.div_in_place
+    JSR signed_divide
+    JMP return_stk
+
+\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
+\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
+    
+.real_mod_stk
+    JSR get_both
+.mod_in_place
+    CLC
+    BCC adc16_in_place  \  always branches
+    JSR signed_divide
+.return_ext
+    LDX #product+2      \  return remainder
+    JMP push16
+
+\  ADD TWO NUMBERS AT TOP OF CALCULATION STACK
+\  RETURN SUM ON TOP OF CALCULATION STACK
+
+.add16_in_place
+    CLC
+    BCC adc16_in_place  \  always branches
+.add16_stk
+    CLC
+.adc16_stk
+    JSR get_both
+    LDX #0
+.adc16_in_place
+    JSR _adc_2
+    JMP return_stk
+._adc_2
+    JSR _adc_1
+._adc_1
+    LDA lh_operand,X
+    ADC rh_operand,X
+    STA lh_operand,X
+    INX
+    RTS
+    
+\  SUBTRACT NUMBER AT TOP OF CALCULATION STACK FROM NUMBER BELOW IT
+\  RETURN DIFFERENCE ON TOP OF CALCULATION STACK
+
+.sub16_in_place
+    SEC
+    BCS sbc16_in_place  \  always branches
+.sub16_stk
+    SEC
+.sbc16_stk
+    JSR get_both
+.sbc16_in_place
+    LDX #0
+    JSR _sbc_2
+    JMP return_stk
+._sbc_2
+    JSR _sbc_1
+._sbc_1
+    LDA lh_operand,X
+    SBC rh_operand,X
+    STA lh_operand,X
+    INX
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+ALIGN &100
+
+.instr_table
+    EQUW _rts           \ 00 => RTS
+    EQUW real_dup       \ 01 => DUP
+    EQUW read_word      \ 02 => RDW
+    EQUW store_word     \ 03 => WRW
+    EQUW real_disp_dec_stk  \ 04 => PRN
+    EQUW vdu_stk        \ 05 => VDU
+    EQUW vdw_stk        \ 06 => VDW = two-byte VDU;
+    EQUW mul_stk        \ 07 => MUL
+    EQUW div_stk        \ 08 => DIV
+    EQUW real_mod_stk   \ 09 => MOD
+    EQUW add16_stk      \ 0A => ADD
+    EQUW sub16_stk      \ 0B => SUB
+    
+
 ._code_end
 
 SAVE "M.CODE", calc_stk, _code_end, _rts
 
 PRINT "init_calc_stk =", ~init_calc_stk
+

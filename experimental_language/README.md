@@ -137,13 +137,12 @@ Store an 8-bit value in the right-hand operand, padding with zeros.
 
 Divides the left-hand operand by the right-hand operand.
 
-### divide
+### divide_signed
 
 Divides the 32-bit value in the left-hand operand and extension by the
-right-hand operand.
-
-This needs making negative-number-friendly.
-
+right-hand operand.  Both operands are first positivified and `neg_flag`
+bits are set as follows: Bit 7 indicates that the quotient is really
+negative, and bit 6 indicates that the remainder is negative.
 
 # ZERO PAGE WORKSPACE
 
