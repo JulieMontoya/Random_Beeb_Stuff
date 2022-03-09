@@ -13,16 +13,67 @@ the answer is always left on the top of the stack.
 Unless explicitly stated otherwise, all values are signed two-byte numbers,
 presented units-first.
 
+# INTERMEDIATE CODE
+
+An intermediate code or **J_CODE** is used to express operations.
+
 # INSTRUCTIONS
 
 Instructions are read and parsed by a despatcher.
 
-## IMMEDIATE MODE
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+## ADDRESSING MODES
+
+J-code instructions, like 6502 instructions, may exist in several different
+addressing modes.  Not all instructions may be sensible in all addressing
+modes!
+
+Instructions may pull data from the stack and/or leave results on the stack.
+
+Most instructions are available in **stack mode**, where all operands to be
+processed are already on the stack.
+
+The most common form of instruction takes one operand and acts upon the value
+on top of the stack, placing the result on the stack.  **Immediate mode** and
+**indirect mode** instructions specify the operand itself, or the location
+where it is to be found, respectively, within the instruction.
+
+### IMMEDIATE MODE
+
+Instructions in immediate mode include the operand directly within the
+instruction.
+
+### INDIRECT MODE
+
+Instructions in indirect mode include an address within the instruction,
+where the actual operand may be found.
+
+### STACK MODE
+
+Instructions in stack mode work on data already on the stack.
+
+
+### IMMEDIATE MODE
 
 Instructions in immediate mode include some data.  Some instructions have
 the ability to work in a "true" immediate mode using the data from the
 instruction directly without storing it on the stack.  Other instructions
 work by copying the data from the instruction to the stack.
+
+### INDIRECT MODE
+
+Instructions in indirect mode include an address where the actual data
+may be found.
+
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+A `SOUND` command takes four parameters: channel, loudness, pitch and length.
+These are pushed onto the stack in order.  The command reads the parameters
+in the same order as they were written, rather than pulling them individually
+and reversing the order; stores them in a parameter block; and calls `OSWORD`
+to play the sound.
 
 # SUBROUTINES
 
