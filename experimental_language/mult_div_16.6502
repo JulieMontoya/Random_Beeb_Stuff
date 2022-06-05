@@ -1,0 +1,1066 @@
+\  TRYING TO BE SPARING WITH ZERO PAGE
+
+product=&70
+multiplicand=&74
+multiplier=&70
+preload=&72
+dividend=&70
+divisor=&74
+quotient=&70
+remainder=&72
+
+W_reg = &70
+X_reg = &72
+O_reg = &74
+
+calc_stk = &7000
+calc_sp = &7E
+scratch_X = &7F
+alt_sp = &7F
+neg_flag = &7F
+
+\  POINTERS ARE IN &80 - &8F
+
+code_ptr = &80
+str_ptr = &82
+for_ptr = &88
+
+num_dims = &86
+opcode = &87
+
+osasci = &FFE3
+oswrch = &FFEE
+osword = &FFF1
+
+CLEAR &6F00,&7100
+ORG &7100
+
+.init_calc_stk
+    JMP real_init_calc_stk
+.ext_disp_dec_stk
+    JMP disp_dec_stk
+.pushAX
+    JMP real_pushAX
+.ext_mul_stk
+    JMP mul_stk
+.ext_div_stk
+    JMP div_stk
+.twc16
+    JMP real_twc16
+.parse_num_stk
+    JMP real_parse_num_stk
+.dup
+    JMP real_dup
+.ext_signed_divide
+    JMP signed_divide
+.conv_str_stk
+    JMP real_conv_str_stk
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  INITIALISE CALCULATION STACK
+
+.real_init_calc_stk
+    LDA #&FC
+    STA calc_sp
+._rts
+    RTS
+
+\  PUSH ACCUMULATOR ONTO CALCULATION STACK
+
+.real_pushA
+    DEC calc_sp         \  decrease calc stack pointer
+    LDY calc_sp
+    STA calc_stk,Y      \  store at top of stack
+    RTS
+
+\  PUSH A 16-BIT VALUE FROM A (LO) AND X (HI) ONTO THE CALCULATION STACK
+\  ON ENTRY, X => LOCATION OF DATA IN ZP
+
+.real_pushAX
+    LDY calc_sp
+    JSR _push_core
+    TXA
+    JSR _push_core
+    STY calc_sp
+    RTS
+    
+\  PUSH A 16-BIT VALUE FROM ZERO PAGE ONTO THE CALCULATION STACK
+\  ON ENTRY, X => LOCATION OF DATA IN ZP
+
+.push16
+    LDY calc_sp
+    JSR _push16_2
+    STY calc_sp
+    RTS
+._push16_2
+    JSR _push16_1
+._push16_1
+    LDA 0,X
+    INX
+._push_core
+    DEY
+    STA calc_stk,Y
+    RTS
+    
+\  PULL ACCUMULATOR FROM CALCULATION STACK
+
+.real_pullA
+    LDY calc_sp
+    LDA calc_stk,Y      \  retrieve from top of stack
+    INC calc_stk        \  increase calc stack pointer
+    RTS
+
+\  PULL A 16-BIT VALUE FROM THE CALCULATION STACK AND STORE IN ZERO PAGE
+\  ON ENTRY, X => LOCATION IN ZP FOR DATA
+
+.pull16
+    LDY calc_sp
+    JSR _pull16_2
+    STY calc_sp
+    RTS
+._pull16_2
+    JSR _pull16_1
+._pull16_1
+    JSR _pull_core
+    STA 1,X
+    DEX
+    RTS
+._pull_core
+    LDA calc_stk,Y
+    INY
+    RTS
+    
+\  DUP : DUPLICATE THE VALUE AT THE TOP OF THE CALCULATION STACK
+\
+
+.real_dup
+    LDY calc_sp
+    JSR _dup2
+    STY calc_sp
+    RTS
+._dup2
+    JSR _dup1
+._dup1
+    DEY
+    LDA calc_stk+2,Y
+    STA calc_stk,Y
+    RTS
+    
+\  GET LEFT AND RIGHT OPERANDS FROM STACK
+
+.get_both
+.pull_OW
+    JSR get_rho
+.get_lho
+.pull_W
+    LDX #W_reg
+    JMP pull16
+.get_rho
+.pull_O
+    LDX #O_reg
+    JMP pull16
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+.vdu_stk
+    JSR get_rho
+    LDA O_reg
+    JMP oswrch
+    
+.vdw_stk
+    JSR get_rho
+    LDA O_reg
+    JSR oswrch
+    LDA O_reg+1
+    JMP oswrch
+
+\  DISPLAY A DECIMAL NUMBER FROM TOP OF STACK
+
+.disp_dec_stk
+    JSR decode_dec_stk
+._dds3
+    LDA neg_flag
+    BPL _dds4
+    LDA #45
+    JSR osasci
+._dds4
+    LDA calc_stk-1,X
+    JSR osasci
+    DEX
+    BNE _dds4
+    RTS
+    
+\  STORE STRING REPRESENTATION OF A NUMBER IN MEMORY
+
+.real_conv_str_stk
+    LDX #str_ptr        \  destination to store string
+    JSR pull16
+    JSR decode_dec_stk
+    LDY #0
+    LDA neg_flag
+    BPL _cvs2
+    LDA #45
+    STA (str_ptr),Y
+    INY
+._cvs2
+    LDA calc_stk-1,X
+    STA (str_ptr),Y
+    INY
+    DEX
+    BNE _cvs2
+    LDA #13             \  final character is CR
+    STA (str_ptr),Y
+    RTS
+    
+    RTS
+
+.decode_dec_stk
+    LDY calc_sp
+    LDA calc_stk,Y
+    STA neg_flag
+    BPL _dds_pos
+    JSR real_twc16
+    LDA #128
+._dds_pos
+    \  We are going to divide the top of the stack ...
+    LDX #dividend
+    JSR pull16
+    \  ... by 10
+    LDA #10
+    JSR set_divisor
+    TAX                 \  we know A=0 here
+._dds1
+    JSR real_div16
+    \  Store the digit's ASCII code in scratch space
+    LDA remainder
+    CLC
+    ADC #48
+    CMP #58             \  see if we need to correct a hex digit
+    BCC _dds2
+    ADC #6              \  here, C=1 so we add one fewer than we need
+._dds2
+    STA calc_stk,X
+    INX
+    \  See if working total has reached zero
+    LDA dividend
+    ORA dividend+1
+    BNE _dds1
+._dds_end
+    RTS
+
+\  PARSE A NUMBER OUT OF A STRING AT SOME LOCATION, GIVEN ON THE STACK;
+\  AND PLACE ITS NUMERIC VALUE ON THE STACK.
+
+.real_parse_num_stk
+    LDX #str_ptr        \  set up string pointer
+    JSR pull16          \  pull value from stack to where X points
+
+\  THE SAME, BUT EXPECTS STR_PTR TO BE ALREADY SET UP
+
+.parse_num_at_ptr
+    LDA #10
+    JSR set_multiplicand
+    STA neg_flag        \  here we know A=0
+    TAX
+._pn0
+    STA product,X
+    INX
+    CPX #4
+    BCC _pn0
+    TAY
+._pn1
+    LDA (str_ptr),Y
+    CMP #13             \  see if it's CR
+    BEQ _pn_cr
+    CMP #32             \  see if it's a space
+    BEQ _pn_space
+    BCC _pn_notdigit    \  end of number if not a digit
+    CMP #45             \  see if it's a minus sign
+    BEQ _pn_minus
+    CMP #58             \  see if it's ":" or greater
+    BCS _pn_notdigit
+    CMP #48             \  see if it's smaller than "0"
+    BCC _pn_notdigit
+    SEC                 \  take away 48
+    SBC #48
+    STA product+2       \  store it in the preload register
+    LDA #0
+    STA product+3
+    JSR mult16_preload  \  multiply total by 10 and add new digit
+._pn_space
+    INY
+    BNE _pn1            \  not expected to fall through
+._pn_notdigit           \  not a digit
+._pn_cr
+    LDX #product        \  this is the value we parsed
+    JSR push16
+    LDA neg_flag        \  see if we have to negativify it
+    BPL _pn_pos
+    JMP real_twc16      \  take twos complement of TOS and return
+
+\  Set the negative flag; gets called if we see a minus sign
+
+._pn_minus
+    LDA #255
+    STA neg_flag
+    BNE _pn_space       \  always branches
+._pn_pos
+    RTS
+
+\  ADVANCE STRING POINTER BY OFFSET IN Y
+
+.adv_str_ptr
+    LDX #str_ptr
+    
+\  ADVANCE A ZERO-PAGE POINTER AT X BY AN OFFSET IN Y
+
+.adv_ptr_X
+    TYA
+    CLC
+    ADC 0,X
+    STA 0,X
+    BCC _ap_1
+    INC 1,X
+._ap_1
+    RTS
+
+\  STORE A WORD IN MEMORY -- ! OPERATOR / VARIABLE ASSIGNMENT
+
+.write_word_stk
+JSR get_rho
+._write_word_in_place
+\  assume address is in place in O_reg and word to write is at TOS
+LDY #2
+LDX calc_sp
+JSR _wrw2
+STX calc_sp
+RTS
+._wrw2
+JSR _wrw1
+._wrw1
+LDA calc_stk,X
+INX
+DEY
+STA (O_reg),Y
+RTS
+
+\  READ A WORD FROM MEMORY -- ! OPERATOR (RHS)
+
+.read_word_stk
+    JSR get_rho
+    LDY #0
+    LDX calc_sp
+    JSR _rw2
+    STX calc_sp
+    RTS
+._rw2
+    JSR _rw1
+._rw1
+    LDA (O_reg),Y
+    INY
+    DEX
+    STA calc_stk,X
+    RTS
+
+\  READ A STRING FROM THE KEYBOARD -- INPUT $
+
+.input_str
+    LDY #0              \  create control block in ZP at str_ptr
+    STY str_ptr         \  byte 0 => address low
+    LDA #7
+    STA str_ptr+1       \  byte 1 => address high
+    LDA #255
+    STA str_ptr+2       \  byte 2 => maximum length
+    STA str_ptr+4       \  byte 4 => maximum ASCII code
+    LDA #32
+    STA str_ptr+3       \  byte 3 => minimum ASCII code
+    TYA
+    LDX #str_ptr
+    JSR osword          \  OSWORD 0 => INPUT
+    RTS                 \  with string at &700
+
+\  READ A NUMBER FROM THE KEYBOARD -- INPUT
+
+.input_num
+    JSR input_str
+    JMP parse_num_at_ptr
+    \  Now we have a numeric value on the stack
+    
+    
+    
+.input_cblk
+    EQUW &700           \  bytes 0-1 => address
+    EQUB 255            \  byte 2 => maximum length
+    EQUB 32             \  byte 3 => minimum ASCII code
+    EQUB 255            \  byte 4 => maximum ASCII code
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MONADIC OPERATIONS
+\
+\  TWOS-COMPLEMENT THE TOP OF THE STACK
+\
+
+.real_twc16
+    LDY calc_sp
+    SEC                 \  so as to add 1 when we flip the bits
+    LDA #0
+    SBC calc_stk+1,Y
+    STA calc_stk+1,Y
+    LDA #0
+    SBC calc_stk,Y
+    STA calc_stk,Y
+    RTS
+
+.twc16_rhs
+    LDX #O_reg
+    BNE twc16_zpX       \  always branches
+.twc16_lhs
+    LDX #W_reg
+.twc16_zpX
+    LDY calc_sp
+    SEC                 \  so as to add 1 when we flip the bits
+    LDA #0
+    SBC 0,X
+    STA 0,X
+    LDA #0
+    SBC 1,X
+    STA 1,X
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+.mult16
+.real_mult16
+    LDA #0
+    STA product+3
+    STA product+2
+.mult16_preload
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    \  Begin by shifting the multiplier right so its lowest bit is already
+    \  in the carry flag.
+    LDY #17             \  one more than we need
+    BNE _mult16_3       \  always branches; A = 0
+._mult16_1
+    BCC _mult16_2
+    \  Add the multiplicand to the high word of the product
+    CLC
+    LDA product+2
+    ADC multiplicand
+    STA product+2
+    LDA product+3
+    ADC multiplicand+1
+    STA product+3
+    \  Shift the product right
+._mult16_2
+    ROR product+3
+    ROR product+2
+._mult16_3
+    ROR product+1
+    ROR product
+    \  See if we need to go around again
+    DEY
+    BNE _mult16_1
+    
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  This is the same bit of code with 2 different names
+
+.set_divisor
+.set_multiplicand
+    STA multiplicand
+    LDA #0
+    STA multiplicand+1
+    RTS
+    
+\  DIVIDE ONE 16-BIT NUMBER BY ANOTHER
+    
+.real_div16
+.divide_no_rem
+    LDA #0
+    STA remainder
+    STA remainder+1
+.divide
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    JSR div_core
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  SIGNED DIVISION.  THIS WORKS BY KEEPING THE DIVIDEND AND DIVISOR POSITIVE
+\  AND USING neg_flag TO INDICATE WHAT IF ANYTHING NEEDS TO BE MADE NEGATIVE
+\  AFTER THE OPERATION IS COMPLETE.
+
+.signed_divide
+    LDA #0
+    STA remainder
+    STA remainder+1
+.signed_div_ext
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    LDA #0
+    STA neg_flag
+    LDA dividend+1
+    BPL positivify_divr
+    LDA #&C0            \  set bits 7 and 6
+    STA neg_flag
+    LDX #dividend       \  twos-complement it
+    JSR twc16_zpX
+.positivify_divr
+    LDA divisor+1
+    BPL _pos_dvr1
+    LDA neg_flag
+    EOR #&80
+    STA neg_flag
+    LDX #divisor        \  twos-complement it
+    JSR twc16_zpX
+._pos_dvr1
+    JSR div_core
+    BIT neg_flag
+    BPL _sd_quot_pos
+    LDX #quotient
+    JSR twc16_zpX       \  negativify the quotient
+._sd_quot_pos
+    BIT neg_flag
+    BVC _sd_rem_pos
+    LDX #remainder
+    JSR twc16_zpX       \  negativify the remainder
+._sd_rem_pos
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+    
+\  CORE DIVISION ROUTINE.  THIS TRASHES REGISTERS .....
+
+.div_core
+    LDY#17              \  one more than we need
+    BNE _divide_3       \  do an extra left shift on just bottom bits
+._divide_1
+    ROL dividend+2
+    ROL dividend+3
+._divide_2
+    SEC
+    LDA dividend+2
+    SBC divisor
+    TAX \ stash low byte in X in case we need it
+    LDA dividend+3
+    SBC divisor+1
+    BCC _divide_3
+    \ update dividend if we had room to subtract
+    STX dividend+2
+    STA dividend+3
+._divide_3
+    ROL dividend      \ C shifts into divd
+    ROL dividend+1
+    DEY
+    BNE _divide_1
+    \  dividend, dividend+1 now contain quotient
+    \  dividend+2, dividend+3 contain remainder
+    RTS
+
+\  MULTIPLY TWO NUMBERS AT TOP OF STACK
+    
+.mul_stk
+    JSR get_both
+.mul_in_place
+    JSR real_mult16
+.return_stk
+    LDX #product
+    JMP push16
+
+\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
+\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
+    
+.div_stk
+    JSR get_both
+.div_in_place
+    JSR signed_divide
+    JMP return_stk
+
+\  DIVIDE NUMBER JUST BELOW TOP OF CALCULATION STACK BY NUMBER ON TOP
+\  RETURN QUOTIENT ON TOP OF CALCULATION STACK
+    
+.real_mod_stk
+    JSR get_both
+.mod_in_place
+    CLC
+    BCC adc16_in_place  \  always branches
+    JSR signed_divide
+.return_ext
+    LDX #X_reg          \  return remainder
+    JMP push16
+
+\  ADD TWO NUMBERS AT TOP OF CALCULATION STACK
+\  RETURN SUM ON TOP OF CALCULATION STACK
+
+.add16_in_place
+    CLC
+    BCC adc16_in_place  \  always branches
+.add16_stk
+    CLC
+.adc16_stk
+    JSR get_both
+    LDX #0
+.adc16_in_place
+    JSR _adc_2
+    JMP return_stk
+._adc_2
+    JSR _adc_1
+._adc_1
+    LDA W_reg,X
+    ADC O_reg,X
+    STA W_reg,X
+    INX
+    RTS
+    
+\  SUBTRACT NUMBER AT TOP OF CALCULATION STACK FROM NUMBER BELOW IT
+\  RETURN DIFFERENCE ON TOP OF CALCULATION STACK
+
+.sub16_in_place
+    SEC
+    BCS sbc16_in_place  \  always branches
+.sub16_stk
+    SEC
+.sbc16_stk
+    JSR get_both
+.sbc16_in_place
+    LDX #0
+    JSR _sbc_2
+    JMP return_stk
+._sbc_2
+    JSR _sbc_1
+._sbc_1
+    LDA W_reg,X
+    SBC O_reg,X
+    STA W_reg,X
+    INX
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  DOUBLE INDIRECTION
+\
+\  On entry, X points to a ZP location.  The 16-bit value to which this
+\  points is read and stored over the address at X in ZP.
+
+.get_dbl_ind
+    LDA (0,X)           \  get low byte
+    PHA                 \  store it on 6502 stack
+    JSR inc16_X         \  advance pointer to high byte
+    LDA (0,X)           \  get high byte
+    STA 1,X             \  store high byte over high byte of address
+    PLA                 \  retrieve low byte from 6502 stack
+    STA 0,X             \  store low byte over low byte of address
+    RTS
+.inc16_X                \  increase 16-bit value at X in ZP
+    INC 0,X
+    BNE _i16_1
+    INC 1,X
+._i16_1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+\  STACK MODE DYADIC OPERATION
+\
+\  Pull O from stack.
+\  Pull W from stack.
+\  Do operation.
+\  Push W to stack.
+\
+\  DIRECT MODE DYADIC OPERATION
+\  Load O from memory.
+\  Pretend to pull W.
+\  Do operation.
+\  Push W to stack.
+\
+\  INDIRECT MODE DYADIC OPERATION
+\  Load O from memory.
+\  Replace O with [O].
+\  Pretend to pull W.
+\  Do operation.
+\  Push W to stack.
+\
+
+.dyadic
+    BIT opcode
+    BPL _dyad_stk       \  bit 7 = 0 => stack mode
+    JSR copy_inst_O
+    BIT opcode
+    BVC _dyad_dir       \  bit 6 = 1 => indirect
+._dyad_indir
+    JSR indir_O
+    BVS _dyad_dir
+._dyad_dir
+    INC calc_sp         \  pretend to pull W ...
+    INC calc_sp         \  ... (which is already still there)
+    BNE _dyad_any       \  should never fall through
+._dyad_stk
+    LDX #O_reg
+    JSR pull16
+    LDX #W_reg
+    JSR pull16
+._dyad_any
+    LDA opcode
+    AND #&1F
+    ASL A
+    TAX
+    LDA instr_table, X
+    STA instr_addr
+    LDA instr_table+1, X
+    STA instr_addr+1
+    JSR do_operation
+    LDX #W_reg
+    JMP push16    
+.do_operation
+    JMP (instr_addr)
+.instr_addr
+    EQUW _rts
+    
+.copy_inst_O
+    LDA (code_ptr), Y
+    STA O_reg
+    INY
+    LDA (code_ptr), Y
+    STA O_reg+1
+    DEY
+    JMP inc_code_ptr2
+
+.inc_code_ptr2
+    JSR inc_code_ptr
+.inc_code_ptr
+    INC code_ptr
+    BNE _icp0
+    INC code_ptr+1
+    ._icp0
+    RTS
+    
+.indir_O
+    LDA (O_reg), Y
+    PHA
+    INY
+    LDA (O_reg), Y
+    STA O_reg+1
+    PLA
+    STA O_reg
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  REVERSE STACK
+\
+
+.rev_stack
+    LDA calc_sp
+    TAY                 \  Y goes up from stack ptr
+    CLC
+    ADC W_reg
+    ADC W_reg           \  might as well just add it twice
+    TAX                 \  X comes down from far end
+    STA alt_sp
+._rv_stk0
+    CPY alt_sp          \  done if we meet or cross
+    BCS _rv_stk_end
+    JSR _rv_stk1
+    DEX                 \  X went *up* by 2: deduct 4 from X
+    DEX
+    DEX
+    DEX
+    STX alt_sp
+    BNE _rv_stk0
+._rv_stk_end
+    RTS
+    
+._rv_stk1               \  swap values at calc_sp and alt_sp
+    JSR _rv_stk2
+._rv_stk2
+    LDA calc_stk, Y
+    PHA
+    LDA calc_stk-2, X
+    STA calc_stk, Y
+    INY
+    PLA
+    STA calc_stk-2, X
+    INX
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  ARRAY ACCESS
+\
+\  On entry:    ARRAY BASE
+\               LAST SUBSCRIPT
+\               .....
+\               FIRST SUBSCRIPT
+\  On exit, str_ptr holds address of selected element within array.
+\
+
+.get_array_base
+    LDX #str_ptr        \  pull array base from stack ...
+    JSR pull16          \  ... and store in str_ptr
+    LDY #0              \  first byte => number of dimensions
+    LDA (str_ptr), Y
+    STA num_dims
+    INY
+    JSR adv_str_ptr     \  now points to first group size
+    LDA num_dims
+    CMP #1
+    BCC _ab_1dim        \  no need to do this for 1D array
+    STA W_reg
+    JSR rev_stack       \  reverse order of subscripts
+._ab_1dim
+    LDA #0              \  zero running total
+    STA str_ptr+2
+    STA str_ptr+3
+._ab_subscr
+    LDY #0
+    LDA (str_ptr), Y    \  read group size
+    INY
+    STA O_reg           \  copy into Operand register
+    LDA (str_ptr), Y
+    INY
+    STA O_reg+1
+    JSR adv_str_ptr     \  advance to next group size, or data proper
+    LDA str_ptr+2       \  copy running total to W
+    STA W_reg
+    LDA str_ptr+3
+    STA W_reg+1
+    JSR mult16          \  multiply running total by group size
+    LDA W_reg           \  update running total
+    STA str_ptr+2
+    LDA W_reg+1
+    STA str_ptr+3
+    JSR pull_W          \  get subscript from stack ...
+    JSR signed_divide   \  ... and reduce it modulo group size
+    LDA X_reg           \  copy remainder to W
+    STA W_reg
+    LDA X_reg+1
+    STA W_reg+1
+    BPL _ab_sub_pos     \  skip if already positive
+    LDA W_reg           \  add O to W to ensure it is positive
+    CLC                 \  (it's bound to be between 1-n and -1)
+    ADC O_reg
+    STA W_reg
+    LDA W_reg+1
+    ADC O_reg+1
+    STA W_reg+1
+._ab_sub_pos
+    LDA W_reg           \  update running total
+    CLC
+    ADC str_ptr+2
+    STA str_ptr+2
+    LDA W_reg+1
+    ADC str_ptr+3
+    STA str_ptr+3
+    DEC num_dims        \  next subscript
+    BNE _ab_subscr
+._ab_upd_ptr
+    ASL str_ptr+2       \  running total is counting elements, not bytes ...
+    ROL str_ptr+3       \  ... so double it to get bytes ...
+    LDA str_ptr         \  ... and add it to pointer
+    CLC
+    ADC str_ptr+2
+    STA str_ptr
+    LDA str_ptr+1
+    ADC str_ptr+3
+    STA str_ptr+1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  DYADIC OPERATIONS
+
+.oper_ADD
+    CLC
+    LDA W_reg
+    ADC O_reg
+    STA W_reg
+    LDA W_reg+1
+    ADC O_reg+1
+    STA W_reg+1
+    RTS
+    
+.oper_SUB
+    SEC
+    LDA W_reg
+    SBC O_reg
+    STA W_reg
+    LDA W_reg+1
+    SBC O_reg+1
+    STA W_reg+1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  TESTS
+
+.oper_TEQ               \  TEQ      = in BASIC
+    LDA W_reg
+    EOR O_reg
+    BNE ret_false       \  false if high bytes differ
+    LDA W_reg+1
+    EOR O_reg+1
+    BNE ret_false       \  false if low bytes differ
+.ret_true
+    LDA #&FF
+    BNE ret_any
+.ret_false
+    LDA #&00
+.ret_any
+    STA W_reg
+    STA W_reg+1
+    RTS
+
+.oper_TNE               \  TNE      <> in BASIC
+    LDA W_reg
+    EOR O_reg
+    BNE ret_true        \  true if high bytes differ
+    LDA W_reg+1
+    EOR O_reg+1
+    BNE ret_true        \  true if low bytes differ
+    BEQ ret_false
+
+.oper_TLT               \  TLT      < in BASIC
+    JSR _tlt_tge
+    BMI ret_true
+    BPL ret_false
+
+.oper_TGE               \  TGE      >= in BASIC
+    JSR _tlt_tge
+    BMI ret_false
+    BPL ret_true
+
+.oper_TGT               \  TGT      > in BASIC
+    JSR _tgt_tle
+    BMI ret_true
+    BPL ret_false
+
+.oper_TLE               \  TLE      <= in BASIC
+    JSR _tgt_tle
+    BMI ret_false
+    BPL ret_true
+
+._tlt_tge
+    SEC
+    LDA W_reg
+    SBC O_reg
+    LDA W_reg+1
+    SBC O_reg+1
+    BVC _t_n_ok         \  V=0 => N is correct
+._t_n_ng
+    EOR #&80            \  toggle sign bit
+._t_n_ok
+    RTS
+    
+._tgt_tle
+    SEC
+    LDA W_reg
+    SBC O_reg
+    LDA W_reg+1
+    SBC O_reg+1
+    BVS _t_n_ng
+    RTS
+
+    
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MONADIC OPERATIONS
+
+.oper_SGN
+    JSR core_sgn
+    BEQ _sgn_zero       \  Z=1 => return 0
+    BMI _sgn_neg        \  N=1 => return &FFFF
+._sgn_pos
+    LDA #1              \  N=0 => return 1
+    STA W_reg
+    LDA #0
+    STA W_reg+1
+    RTS
+._sgn_neg               \  return &FFFF in W
+    LDA #&FF
+._sgn_done
+    STA W_reg
+    STA W_reg+1
+    RTS
+._sgn_zero              \  return 0 in W
+    LDA #0
+    BEQ _sgn_done
+
+\  If a number is negative, its high byte will definitely not be zero.
+\  If a number is positive and >255, its high byte also will not be 0.
+\  Therefore, if the high byte is not zero, its sign determines the sign
+\  of the number.
+\  If the high byte is zero, we have to look at the low byte, but need
+\  to beware lest 128-255 give "false negatives".
+\  We know the number is positive if not 0.
+\  If the high byte is zero, the number must be eithe zero or positive.
+
+.core_SGN
+    LDA W_reg+1
+    BNE _sgn_right      \  Z=0, N=correct sign
+    LDA W_reg
+    BEQ _sgn_right      \  Z=1, N=0
+    LDA #1              \  force Z=0, N=0
+._sgn_right
+    RTS
+    
+.oper_ABS
+    LDA W_reg+1
+    BMI _abs_neg
+    RTS
+._abs_neg
+    LDX #W_reg
+    JMP twc16_zpX
+    
+    
+    
+\  Numeric Comparison
+
+
+    
+    
+ALIGN &100
+
+.instr_table
+    EQUW _rts           \ 00 => RTS
+    EQUW real_dup       \ 01 => DUP
+    EQUW read_word_stk  \ 02 => RDW
+    EQUW write_word_stk \ 03 => WRW
+    EQUW disp_dec_stk   \ 04 => PRN
+    EQUW vdu_stk        \ 05 => VDU
+    EQUW vdw_stk        \ 06 => VDW = two-byte VDU;
+    EQUW mul_stk        \ 07 => MUL
+    EQUW div_stk        \ 08 => DIV
+    EQUW real_mod_stk   \ 09 => MOD
+    EQUW add16_stk      \ 0A => ADD
+    EQUW sub16_stk      \ 0B => SUB
+    
+
+._code_end
+
+SAVE "M.CODE", calc_stk, _code_end, _rts
+
+PRINT "init_calc_stk =", ~init_calc_stk
+
+    
