@@ -3,6 +3,23 @@
 Just trying to see whether I can do enough with bits of YSON and BCP to
 create a runtime library capable of supporting a cut-down BBC BASIC.
 
+# THE VIRTUAL MACHINE
+
+## THE W REGISTER
+
+**W** is the Working register.
+
+## THE X REGISTER
+
+**X** is the eXtension register.
+
+## THE O REGISTER
+
+**O** is the Operand register, and is used for the right-hand operand in
+dyadic  (double-ended)  operations. 
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+
 # CALCULATION STACK
 
 The calculation stack is independent of the 6502 stack.  The right-hand
@@ -226,4 +243,51 @@ Hex | Opcode | Hex | Opcode | Meaning
 &0B | SUB    | &8B | SUB    | Subtract = - operator
 & |     | & |     | 
 
+# NUMERIC VARIABLES
+
+Numeric variables are 16-bit signed integers.
+
+# ARRAYS
+
+Arrays can have as many dimensions as space permits.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+`DIM S(320)` -- creates a one-dimensional array with 320 entries, accessed
+as `S(0)` to `S(319)`.
+
+`DIM B(8,8)` -- creates a two-dimensional array with 64 entries, accessed as
+`B(0,0)` to `B(7,7)`.
+
+Subscripts start from 0 and wrap around, so in the above example `S(320)` is
+an alias for `S(0)`; `S{318)`and `S(-2)` refer to the same  (last but one)
+element, and so on.   **This behaviour differs from BBC BASIC.**  You will
+have to increase your dimensions by one if you want to use element 0.
+
+Each array has a header record as follows:
+
+BYTES    | MEANING
+---------|----------------------
+0        | Number of dimensions
+1..2     | First dimension
+...      | ...
+2n-1..2n | Last dimension
+
+This is followed by the actual data, 2 bytes per element.
+
+## ARRAY BOUNDS ENFORCEMENT
+
+Array bounds are enforced in the most primitive and brutal way possible, by
+reducing each subscript modulo the size of its dimension.  If the remainder
+is negative, then the size is added  (which is certain to give a positive
+answer by the operation of the modulus function).
+
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+# DIFFERENCES FROM BBC BASIC
+
++ All mathematics is 16-bit integer.
++ The `!` memory operator operates on 16-bit values.
++ After `DIM A(10)`, `A(0)` and `A(10)` refer to the _same_ array element!
++ Only strings using the `$` memory operator are supported.
 
