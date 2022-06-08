@@ -5,6 +5,36 @@ create a runtime library capable of supporting a cut-down BBC BASIC.
 
 # THE VIRTUAL MACHINE
 
+The virtual machine is primarily stack-based.  A few registers are used
+internally.
+
+The virtual machine is based primarily around a stack, which is implemented
+in software independently of the 6502 stack.  (_A hypothetical J-code virtual
+machine running on the Z-80 probably would use the SP' alternative stack
+pointer._)
+
+The virtual machine is based primarily around a stack, which is implemented
+in software independently of the 6502 stack.  Program instructions can place
+data on the stack and manipulate data already on the stack.
+
+
+
+## INSTRUCTIONS AND DATA
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+
+
+The program will include both data to be processed and instructions for how
+to process it, and it is important to be able to distinguish which is which.
+It was not thought realistic to dedicate a bit out of every byte for this, so
+instead an instruction must be used to indicate "place value on stack".
+
+It was not thought realistic to dedicate a bit out of every byte to indicate
+whether it contained instructions or data. 
+
+The simplest instruction is "Place literal value on stack".  
+
+
 ## THE W REGISTER
 
 **W** is the Working register.
