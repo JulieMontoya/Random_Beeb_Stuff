@@ -18,6 +18,62 @@ in software independently of the 6502 stack.  Program instructions can place
 data on the stack and manipulate data already on the stack.
 
 
+The general principle is to have a virtual machine executing instructions
+in an intermediate language, with operands being supplied and results
+returned via a stack.  All values are 16-bit signed integers.
+
+An expression such as `2+3` could be represented as follows:
+```
+use 2
+use 3
+add
+```
+**use** is an instruction which places a value on the Stack.  So after
+`use 2` the Stack contains the value 2.  After `use 3` the Stack contains
+the values 3 and 2.  **add** adds two numbers from the Stack and places
+their sum on the Stack.  After `add` the Stack contains the value 5.
+
+We can also read values from memory by placing addresses on the Stack and
+executing a **get** instruction, which replaces the value on the Stack by
+the contents of that address in memory.  An expression such as
+`I% * 100 + V%`
+could be represented as follows:
+```
+use &0414
+get
+use 100
+mul
+use &0454
+get
+add
+```
+
+We can do better than this, though, by combining some of the most frequently
+occurring operations with a **use** instruction; effectively creating
+addressing modes.  This will consume space among the possible instructions,
+but if necessary we can limit everything to a subset of the most common ones.
+
+### IMMMEDIATE MODE
+
+Immediate mode takes a value specified in the instruction, pushes it onto the
+Stack and performs the specified operation.
+
+Immediate mode is indicated by the presence of an operand: `add 3`
+
+### INDIRECT MODE
+
+Indirect mode takes a value specified in the instruction, pushes it onto
+the stack, performs a **get** instruction to get the value stored in that
+address and finally performs the specified operation.
+
+Indirect mode is indicated by round brackets: `add (&0454)`
+
+### STACK MODE
+
+This is the normal working mode, which expects any input value(s) on the Stack 
+and leaves any result(s) there.
+
+Stack mode instructions do not include an operand: `mul`
 
 ## INSTRUCTIONS AND DATA
 .........!.........!.........!.........!.........!.........!.........!.........!
@@ -27,12 +83,12 @@ data on the stack and manipulate data already on the stack.
 The program will include both data to be processed and instructions for how
 to process it, and it is important to be able to distinguish which is which.
 It was not thought realistic to dedicate a bit out of every byte for this, so
-instead an instruction must be used to indicate "place value on stack".
+instead an instruction must be used to indicate "place value on Stack".
 
 It was not thought realistic to dedicate a bit out of every byte to indicate
 whether it contained instructions or data. 
 
-The simplest instruction is "Place literal value on stack".  
+The simplest instruction is "Place literal value on Stack".  
 
 
 ## THE W REGISTER
@@ -52,10 +108,10 @@ dyadic  (double-ended)  operations.
 
 # CALCULATION STACK
 
-The calculation stack is independent of the 6502 stack.  The right-hand
-operand is read from the stack or supplied in immediate mode.  The left-hand
-operand (if any) is read from the stack.  On completion of an operation,
-the answer is always left on the top of the stack.
+The calculation Stack is independent of the 6502 stack.  The right-hand
+operand is read from the Stack or supplied in immediate mode.  The left-hand
+operand (if any) is read from the Stack.  On completion of an operation,
+the answer is always left on the top of the Stack.
 
 Unless explicitly stated otherwise, all values are signed two-byte numbers,
 presented units-first.
@@ -76,13 +132,13 @@ J-code instructions, like 6502 instructions, may exist in several different
 addressing modes.  Not all instructions may be sensible in all addressing
 modes!
 
-Instructions may pull data from the stack and/or leave results on the stack.
+Instructions may pull data from the Stack and/or leave results on the Stack.
 
-Most instructions are available in **stack mode**, where all operands to be
-processed are already on the stack.
+Most instructions are available in **Stack mode**, where all operands to be
+processed are already on the Stack.
 
 The most common form of instruction takes one operand and acts upon the value
-on top of the stack, placing the result on the stack.  **Immediate mode** and
+on top of the Stack, placing the result on the Stack.  **Immediate mode** and
 **indirect mode** instructions specify the operand itself, or the location
 where it is to be found, respectively, within the instruction.
 
@@ -98,15 +154,15 @@ where the actual operand may be found.
 
 ### STACK MODE
 
-Instructions in stack mode work on data already on the stack.
+Instructions in Stack mode work on data already on the Stack.
 
 
 ### IMMEDIATE MODE
 
 Instructions in immediate mode include some data.  Some instructions have
 the ability to work in a "true" immediate mode using the data from the
-instruction directly without storing it on the stack.  Other instructions
-work by copying the data from the instruction to the stack.
+instruction directly without storing it on the Stack.  Other instructions
+work by copying the data from the instruction to the Stack.
 
 ### INDIRECT MODE
 
@@ -117,7 +173,7 @@ may be found.
 .........!.........!.........!.........!.........!.........!.........!.........!
 
 A `SOUND` command takes four parameters: channel, loudness, pitch and length.
-These are pushed onto the stack in order.  The command reads the parameters
+These are pushed onto the Stack in order.  The command reads the parameters
 in the same order as they were written, rather than pulling them individually
 and reversing the order; stores them in a parameter block; and calls `OSWORD`
 to play the sound.
@@ -126,72 +182,72 @@ to play the sound.
 
 ### init_calc_stk
 
-Initialise the calculation stack.
+Initialise the calculation Stack.
 
 ### pushAX
 
 Push a 16-bit value from A (low byte) and X (high byte) to the calculation
-stack.
+Stack.
 
 ### push16
 
 Push a 16-bit value from a zero-page location specified in X to the
-calculation stack.
+calculation Stack.
 
 ### pull16
 
-Pull a 16-bit value from the calculation stack to a zero-page location
+Pull a 16-bit value from the calculation Stack to a zero-page location
 specified in X.
 
 ### get_both
 
-Pull both left-hand and right-hand operands from the calculation stack to
+Pull both left-hand and right-hand operands from the calculation Stack to
 their usual zero-page locations.
 
 .get_lho
 
 ### .mult_stk
 
-Multiply two numbers at the top of the stack and place the product on the
-stack.
+Multiply two numbers at the top of the Stack and place the product on the
+Stack.
 
 ### disp_dec_stk
 
-Pull a value from the top of the stack and display it as a decimal number.
+Pull a value from the top of the Stack and display it as a decimal number.
 
 ### conv_str_stk
 
-Pull an address from the top of the stack.  Pull a value from the top of
-the stack, and store its decimal representation as an ASCII string, ending
+Pull an address from the top of the Stack.  Pull a value from the top of
+the Stack, and store its decimal representation as an ASCII string, ending
 with CR, at the supplied address.
 
 ### decode_dec_stk
 
-Pull a value from the top of the stack.  If it is negative, set bit 7 of
+Pull a value from the top of the Stack.  If it is negative, set bit 7 of
 `neg_flag` and twos-complement it.  Repeatedly divide by ten and store the
 ASCII value of the digit representing the remainder in a scratch space at
-the far end of the calculation stack, units-first.  On exit, X points to
+the far end of the calculation Stack, units-first.  On exit, X points to
 the location _after_ the last (= first!) digit.
 
 ### parse_num_stk
 
-Pull an address from the top of the stack, move it to `str_ptr` and proceed
+Pull an address from the top of the Stack, move it to `str_ptr` and proceed
 to `parse_num_at_ptr`.
 
 ### parse_num_at_ptr
 
 Search forwards in memory from `str_ptr` for a decimal number, stopping at
 the first non-digit, non-space character.  Return the number read on top
-of the stack.
+of the Stack.
 
 ### store_word
 
-Pull an address from the stack.  Pull a value from the stack and store it
+Pull an address from the Stack.  Pull a value from the Stack and store it
 in the given address.
 
 ### twc16
 
-Replace the value on top of the stack by its twos complement.
+Replace the value on top of the Stack by its twos complement.
 
 ## INTERNAL OPERATIONS
 
@@ -249,7 +305,7 @@ Location | Name       | Meaning
 &70-&71  | lh_operand | Left-hand operand / result
 &72-&73  | remainder  | Preload / remainder /result extension
 &74-&75  | rh_operand | Right-hand operand
-&7E      | calc_sp    | Calculation stack pointer
+&7E      | calc_sp    | Calculation Stack pointer
 &7F      | neg_flag   | Negative flag
 &80-&81  | code_ptr   | Pointer to instruction being executed
 &82-&83  | str_ptr    | String pointer
