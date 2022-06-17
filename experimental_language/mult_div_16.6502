@@ -806,6 +806,48 @@ RTS
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
+\  ROLL STACK
+\
+
+.roll_stack
+    LDY calc_sp
+    TYA                 \  Y goes up from stack ptr
+    CLC
+    ADC W_reg
+    ADC W_reg           \  might as well just add it twice
+    \  Now A points W values into the stack
+    TAY    
+    \  Stash this value on the 6502 stack
+    LDA calc_stk-2, Y
+    PHA
+    STA &75
+    LDA calc_stk-1, Y
+    PHA
+    STA &74
+    STY &76
+    LDX #0
+._rl_stk0
+    JSR _rl_stk1
+    INX
+    CPX W_reg
+    BCC _rl_stk0
+._rl_stk_end
+    PLA
+    STA calc_stk+1,Y
+    PLA
+    STA calc_stk, Y
+    RTS
+        
+._rl_stk1               \  copy a value down the stack
+    JSR _rl_stk2
+._rl_stk2
+    LDA calc_stk-3, Y
+    STA calc_stk-1,Y
+    DEY
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
 \  ARRAY ACCESS
 \
 \  On entry:    ARRAY BASE
@@ -886,6 +928,25 @@ RTS
     STA str_ptr+1
     RTS
 
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  FOR AND NEXT
+
+\.oper_NXT
+\    LDY #0
+\    JSR get_lpstk
+\
+\    RTS
+\    
+\.get_lpstk
+\    LDA (loop_ptr), Y
+\    STA O_reg
+\    INY
+\    LDA (loop_ptr), Y
+\    STA O_reg+1
+\    INY
+\    RTS
+    
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 \  DYADIC OPERATIONS
@@ -1006,6 +1067,18 @@ RTS
 ._sgn_zero              \  return 0 in W
     LDA #0
     BEQ _sgn_done
+.core_sgn
+   LDA W_reg
+   BNE _core_sgn_nz
+   \  Low byte is zero.  High byte determines sign and zero-ness.
+   LDA W_reg+1          \  Set N and Z properly
+   RTS                  \  Z=1 if really 0
+   ._core_sgn_nz
+   \  Low byte is not zero.  High byte determines sign.
+   LDA W_reg+1          \  Set N properly
+   ORA #1               \  make sure Z=0
+   RTS
+   
 
 \  If a number is negative, its high byte will definitely not be zero.
 \  If a number is positive and >255, its high byte also will not be 0.
@@ -1014,7 +1087,9 @@ RTS
 \  If the high byte is zero, we have to look at the low byte, but need
 \  to beware lest 128-255 give "false negatives".
 \  We know the number is positive if not 0.
-\  If the high byte is zero, the number must be eithe zero or positive.
+\  If the high byte is zero, the number must be either zero or positive.
+\  If zero, we return with Z=1 (and N=0, by the 6502's internal logic).
+\  If non-zero, we set A=1 in order to force Z=0 and N=0.
 
 .core_SGN
     LDA W_reg+1
@@ -1028,6 +1103,7 @@ RTS
 .oper_ABS
     LDA W_reg+1
     BMI _abs_neg
+._abs_pos
     RTS
 ._abs_neg
     LDX #W_reg
@@ -1035,9 +1111,11 @@ RTS
     
     
     
-\  Numeric Comparison
-
-
+\  Numeric comparisons work by subtracting O from W, or vice-versa, and
+\  checking N and V.  (When a large positive number is subtracted from a
+\  large negative number, a one being carried from bit 6 to bit 7 will
+\  cause a false change of sign: the difference will have its highest
+\  bit set to 0.  The V flag indicates such a condition has occurred.)
     
     
 ALIGN &100
