@@ -107,12 +107,12 @@ Byte | Size | Meaning
 3-4  |    2 | Address of 1st parameter
 5-6  |    2 | Address of 2nd parameter
 ...  |  ... | ...
-     |    2 | Address of last parameter
-     |    2 | Address of 1st local variable
-     |    2 | Address of 2nd local variable
+.    |    2 | Address of last parameter
+.    |    2 | Address of 1st local variable
+.    |    2 | Address of 2nd local variable
 ...  |  ... | ...
-     |    2 | Address of last local variable
-     |    2 | Address of code
+.    |    2 | Address of last local variable
+.    |    2 | Address of code
 
 
 # THE VIRTUAL MACHINE
