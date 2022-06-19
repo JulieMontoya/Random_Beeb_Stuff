@@ -22,8 +22,12 @@ neg_flag = &7F
 \  POINTERS ARE IN &80 - &8F
 
 code_ptr = &80
-str_ptr = &82
-for_ptr = &88
+str_ptr  = &82
+params   = &84          \  these get stomped on by INPUT!
+par_loc  = &85
+returns  = &86
+for_ptr  = &88
+pib      = &8A
 
 num_dims = &86
 opcode = &87
@@ -1109,8 +1113,182 @@ RTS
     LDX #W_reg
     JMP twc16_zpX
     
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
     
+\  ENTER A PROCEDURE
+
+.proc
+    JSR read_pib_header
+    LDX #0
+.store_param
+    CPX par_loc
+    BCS _sp_done
     
+    \  Store the variable location and its present value on the Stack.
+    \  We have to do this for all parameters and local variables.
+    
+    LDA (pib), Y
+    STA W_reg
+    INY
+    LDA (pib), Y
+    STA W_reg+1
+    INY
+    TYA
+    PHA
+    LDY #0
+    LDA (W_reg), Y
+    STA O_reg
+    INY
+    LDA (W_reg), Y
+    STA O_reg+1
+    TXA
+    PHA
+    \LDX #W_reg         \  No need for address on Stack
+    \JSR push16
+    LDX #O_reg          \  Just the old value
+    JSR push16
+    PLA
+    TAX
+    CPX params
+    BCS _sp_local
+    
+    \  This is a parameter, so we have to populate its variable (whose
+    \  address is still in W)  with a value from lower down the Stack.
+    
+    TXA
+    PHA
+    LDY #0
+    LDX alt_sp          \  Pointer to parameters
+    JSR _fill_param
+    STX alt_sp
+    PLA
+    TAX
+._sp_local
+    PLA
+    TAY
+    INX
+    BNE store_param     \  Not expecting to fall through
+._sp_done
+    LDX #code_ptr       \  Store return address on Stack
+    JSR push16
+    LDX #pib            \  Store address of PIB on Stack
+    JMP push16
+    
+._fill_param
+    JSR _fp1
+._fp1
+    DEX
+    LDA calc_stk, X
+    STA (W_reg), Y
+    INY
+    RTS
+
+\  READ PARAMETER INFO BLOCK HEADER
+\  byte 0 => parameter count
+\  byte 1 => local variables count
+\  byte 2 => returns count
+\   ... followed by addresses of parameters
+\   ... followed by addresses of local variables
+\   ... followed by code
+
+.read_pib_header
+    LDY #0              \  0 => parameter count
+    LDA (pib), Y
+    STA params          \  parameter count
+    INY                 \  1 => local variable count
+    CLC
+    ADC (pib), Y
+    STA par_loc         \  parameters + locals count
+    INY                 \  2 => returned count
+    LDA (pib), Y
+    STA returns         \  returned count
+    INY
+    RTS
+    
+\  RESTORE LOCAL VARIABLES AND VARIABLES USED FOR PARAMETERS FROM BELOW ANY
+\  RETURNED VALUES ON THE CALCULATION STACK
+
+.endproc
+    \\\\  THIS IS NOT QUITE RIGHT
+    \  We need to get the address of the PIB, which is some way down the
+    \  Stack, *before* we can read its header!
+    JSR read_pib_header
+    LDA par_loc         \  number of values to restore
+    ASL A               \  we know C=0
+    ADC #3              \  clear header
+    TAY
+    LDA calc_sp
+    STA alt_sp          \  make copy of Stack pointer
+    ADC returns         \  Remember this counts values ...
+    ADC returns         \  ... so we need to add twice 
+    ADC #4              \  clear return and PIB addresses
+    STA calc_sp         \  now Stack ptr points to saved values
+.restore_param
+    CPY #5
+    BCC _rp_done
+    DEY
+    LDA (pib), Y
+    STA W_reg+1
+    DEY
+    LDA (pib), Y
+    STA W_reg           \  now W holds address of variable
+    TYA
+    PHA
+    LDX #O_reg
+    JSR pull16          \  pull value from stack into O
+    LDY #0
+    LDA O_reg
+    STA (W_reg), Y      \  store it back
+    INY
+    LDA O_reg+1
+    STA (W_reg), Y
+    PLA
+    TAY
+    BNE restore_param   \  Not expecting to fall through
+._rp_done
+    \  Now we need to move the returned values and return address back
+    \  down the stack, overwriting the original parameters.
+    LDA calc_sp
+    CLC
+    ADC params
+    ADC params
+    STA calc_sp         \  Now calc_sp is below the parameters.
+    TAY
+    LDA alt_sp
+    CLC
+    ADC returns
+    ADC returns
+    ADC #4              \  for the PIB and return addresses
+    TAX                 \  Now X points below the returns.
+    \\\\  TOO LATE! We should have done this earlier
+    \\\\LDX #pib            \  Get address of PIB from Stack
+    \\\\JSR pull16
+._rp_close_gap
+    CPX alt_sp
+    BEQ _rp_cg_done
+    LDA calc_stk-1, X
+    DEX
+    STA calc_stk-1, Y
+    DEY
+    BNE _rp_close_gap   \  Not expecting to fall through
+._rp_cg_done
+    STY calc_sp         \  Now top of stack is above return stuff
+    RTS
+    \  If we have any values to return, we need to roll the return
+    \  address to the top of the Stack.
+    LDX returns
+    BEQ _rp_no_roll
+    INX
+    STX W_reg
+    JSR roll_stack
+._rp_no_roll
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
 \  Numeric comparisons work by subtracting O from W, or vice-versa, and
 \  checking N and V.  (When a large positive number is subtracted from a
 \  large negative number, a one being carried from bit 6 to bit 7 will
