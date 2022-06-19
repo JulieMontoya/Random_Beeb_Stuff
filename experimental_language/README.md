@@ -87,9 +87,11 @@ A procedure parameter block contains the locations of each parameter and
 all variables declared `LOCAL` to the procedure.  On entry to the
 `PROC`edure, the values of those variables are stored on the Stack, and the
 variables declared as parameters are populated with values taken from lower
-down the Stack.  On exit, the local variables and variables used for
-parameters are restored from the Stack, and the Stack pointer reset to
-wherever it was before the first of the parameters was pushed to the Stack.
+down the Stack.  (The parameter block can always be re-read, so the
+locations need not be stored on the Stack.)  On exit, the local variables
+and variables used for parameters are restored from the Stack, and the Stack
+pointer reset to wherever it was before the first of the parameters was
+pushed to the Stack.
 
 ### FUNCTIONS
 
