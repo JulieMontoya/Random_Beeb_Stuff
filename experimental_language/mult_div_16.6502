@@ -30,7 +30,10 @@ for_ptr  = &88
 pib      = &8A
 
 num_dims = &86
-opcode = &87
+opcode   = &87
+for_sp   = &8E
+
+rnd_seed = &0D          \  BBC BASIC uses this as RND seed
 
 osasci = &FFE3
 oswrch = &FFEE
@@ -934,25 +937,6 @@ RTS
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
-\  FOR AND NEXT
-
-\.oper_NXT
-\    LDY #0
-\    JSR get_lpstk
-\
-\    RTS
-\    
-\.get_lpstk
-\    LDA (loop_ptr), Y
-\    STA O_reg
-\    INY
-\    LDA (loop_ptr), Y
-\    STA O_reg+1
-\    INY
-\    RTS
-    
-\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-\
 \  DYADIC OPERATIONS
 
 .oper_ADD
@@ -1039,10 +1023,10 @@ RTS
     
 ._tgt_tle
     SEC
-    LDA W_reg
-    SBC O_reg
-    LDA W_reg+1
-    SBC O_reg+1
+    LDA O_reg
+    SBC W_reg
+    LDA O_reg+1
+    SBC W_reg+1
     BVS _t_n_ng
     RTS
 
@@ -1288,6 +1272,161 @@ RTS
     
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
+\  ZX81/SPECTRUM PSEUDO-RANDOM NUMBER GENERATOR
+
+.zx_rnd
+    LDA rnd_seed
+    STA W_reg
+    LDA rnd_seed+1
+    STA W_reg+1
+    \  Add 1 to the seed
+    INC W_reg
+    BNE _zx_rnd1
+    INC W_reg+1
+._zx_rnd1
+    LDA #75             \  a primitive root modulo 65537
+    JSR set_multiplicand
+    JSR mult16
+    \  Reduce product modulo 65537
+    LDA #128
+    STA X_reg+1
+._zx_rnd2
+    SEC
+    LDA W_reg
+    SBC X_reg+1
+    TAY
+    LDA W_reg+1
+    SBC #0
+    TAX
+    LDA W_reg+2
+    SBC X_reg+1
+    BCC _zx_rnd3
+    \  Subtraction succeeded; modify dividend
+    STA W_reg+2
+    STX W_reg+1
+    STY W_reg
+._zx_rnd3
+    LSR X_reg+1         \  import 0 into bit 7
+    BCC _zx_rnd2
+    \  One fell out the end; we have a remainder
+    LDA W_reg           \  subtract 1 from remainder and store as new seed
+    SEC
+    SBC #1
+    STA rnd_seed
+    LDA W_reg+1
+    SBC #0
+    STA rnd_seed+1
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  FOR AND NEXT
+
+.oper_NXT
+    \  Find the last entry on the FOR stack
+    LDA for_sp
+    SEC
+    SBC #8
+    STA alt_sp          \  save ctrl var addr
+    TAY
+    LDX #str_ptr
+    JSR get_for_stk     \  str_ptr => control var address
+    JSR load_W_SP_S     \  W => control var value
+    LDX #O_reg
+    JSR get_for_stk     \  O => step size
+    PHA                 \  save sign of step
+    JSR oper_ADD        \  Update the value
+    JSR store_W_SP_S    \  Store it back in control variable
+    JSR get_for_stk     \  O => limit
+    PLA
+    BMI _nxt_step_neg
+._nxt_step_poz          \  Go round again if current <= limit
+    JSR _tgt_tle
+    BPL _nxt_again
+    RTS
+._nxt_step_neg          \  Go round again if current >= limit
+    JSR _tlt_tge
+    BPL _nxt_again
+    RTS
+._nxt_again             \  Reset code_ptr to go round loop again
+    LDX #code_ptr
+    JSR get_for_stk     \  code_ptr => top of loop
+    RTS
+
+.get_for_stk
+    LDA (for_ptr), Y
+    STA 0, X
+    INY
+    LDA (for_ptr), Y
+    STA 1, X
+    INY
+    RTS
+    
+    
+\  READ A WORD POINTED TO BY THE O REGISTER INTO THE W REGISTER
+
+.core_GET
+    LDY #0
+    LDA (O_reg), Y
+    STA W_reg
+    INY
+    LDA (O_reg), Y
+    STA W_reg+1
+    RTS
+
+\  STORE THE W REGISTER AT THE ADDRESS POINTED TO BY THE O REGISTER
+
+.core_PUT
+    LDY #0
+    LDA W_reg
+    STA (O_reg), Y
+    INY
+    LDA W_reg+1
+    STA (O_reg), Y
+    RTS
+    
+\  READ A WORD POINTED TO BY THE STRING POINTER INTO THE W REGISTER
+\  "SAFE" VERSION PUSHES Y ON 6502 STACK
+
+.load_W_SP_S
+    TYA
+    PHA
+    JSR load_W_SP
+    PLA
+    TAY
+    RTS
+.load_W_SP
+    LDY #0
+    LDA (str_ptr), Y
+    STA W_reg
+    INY
+    LDA (str_ptr), Y
+    STA W_reg+1
+    RTS
+    
+
+\  STORE THE W REGISTER AT THE ADDRESS POINTED TO BY THE STRING POINTER
+\  "SAFE" VERSION PUSHES Y ON 6502 STACK
+
+.store_W_SP_S
+    TYA
+    PHA
+    JSR store_W_SP
+    PLA
+    TAY
+    RTS
+.store_W_SP
+    LDY #0
+    LDA W_reg
+    STA (str_ptr), Y
+    INY
+    LDA W_reg+1
+    STA (str_ptr), Y
+    RTS
+
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
 
 \  Numeric comparisons work by subtracting O from W, or vice-versa, and
 \  checking N and V.  (When a large positive number is subtracted from a
@@ -1319,4 +1458,3 @@ SAVE "M.CODE", calc_stk, _code_end, _rts
 
 PRINT "init_calc_stk =", ~init_calc_stk
 
-    
