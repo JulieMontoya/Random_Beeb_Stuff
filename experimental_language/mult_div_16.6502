@@ -1361,8 +1361,45 @@ RTS
     STA 1, X
     INY
     RTS
+
+\  MAKE A NEW ENTRY ON THE FOR STACK
+
+.oper_FOR
+    LDX #W_reg
+    JSR push16          \  Push W onto the Stack proper
+    LDA #4              \  We want the fourth value down
+    STA W_reg
+    JSR roll_stack      \  Now control var addr is on top of the Stack
+    LDX #str_ptr
+    JSR pull16          \  Get control var address in str_ptr
+    LDY for_sp
+    LDX #str_ptr
+    JSR put_for_stk_Y   \  Bytes 0, 1 => control var address
+    JSR pull_W          \  Get step in W
+    LDX #W_reg
+    JSR put_for_stk     \  Bytes 2, 3 => step
+    JSR pull_W          \  Get terminating value in W
+    LDX #W_reg
+    JSR put_for_stk     \  Bytes 4, 5 => terminating value
+    JSR pull_W          \  Get starting value in W
+    JSR store_W_SP      \  Store starting value in control variable
+    LDX #code_ptr
+    JSR put_for_stk     \  Bytes 6, 7 => continue address
+    STY for_sp
+    RTS
     
-    
+.put_for_stk
+    LDY alt_sp
+.put_for_stk_Y
+    LDA 0, X
+    STA (for_ptr), Y
+    INY
+    LDA 1, X
+    STA (for_ptr), Y
+    INY
+    STY alt_sp
+    RTS
+
 \  READ A WORD POINTED TO BY THE O REGISTER INTO THE W REGISTER
 
 .core_GET
