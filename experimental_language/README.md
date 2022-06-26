@@ -452,6 +452,57 @@ Location | Name       | Meaning
 
 # INTERNAL OPCODES
 
+Not all these are used by BASIC, but they seemed too good not to include
+for possible future use in a different language implemented with the same
+interpreter.
+
+Hex | Mnemonic | Stack | Direct  | Indirect | Meaning
+----|----------|-------|---------|----------|----------
+&00 |        . | DUP   | &80 USE | &C0 GET  | See below
+
+This instruction has different names depending on how it is invoked.
+In Stack mode, `DUP` creates a duplicate copy of the value on top of the
+Stack. In direct mode, `USE` specifies a literal value to push on top of
+the Stack.  In indirect mode, `GET` specifies an address which in turn
+holds the value to push on top of the Stack.
+
+### Dyadic Operations
+
+BASIC-like relational operators such as TLE return zero if the left-hand
+operand is greater than the right-hand operand, or -1  (i.e., all bits set)
+if the left-hand operand is less than or equal to the right-hand operand.
+Logical AND/OR/EOR work on a bit-by-bit basis and have lower priority than
+the relational operators.
+
+Hex | Mnemonic | Stack | Direct  | Indirect | Meaning
+----|----------|-------|---------|----------|----------
+&01 | EOR      | *     | &81     | &C1      | logic Exclusive OR
+&02 | ORI      | *     | &82     | &C2      | logic OR Inclusive
+&03 | AND      | *     | &83     | &C3      | logic AND
+&04 | ADD      | *     | &84     | &C4      | ADD
+&05 | SUB      | *     | &85     | &C5      | SUBtract
+&06 | MUL      | *     | &86     | &C6      | MULtiply
+&07 | DIV      | *     | &87     | &C7      | DIVide
+&08 | MOD      | *     | &88     | &C8      | MODulus
+&09 | DIP      | *     | &89     | &C9      | DIvide Product
+&0A | POW      | *     | &8A     | &CA      | POWer
+&0B | TEQ      | *     | &8B     | &CB      | Test EQual to
+&0C | TNE      | *     | &8C     | &CC      | Test Not Equal to
+&0D | TLT      | *     | &8D     | &CD      | Test Less than
+&0E | TGE      | *     | &8E     | &CE      | Test Greater than or Equal To
+&0F | TGT      | *     | &8F     | &CF      | Test Greater Than
+&10 | TLE      | *     | &90     | &D0      | Test Less than or Equal
+&11 | CMP      | *     | &91     | &D1      | CoMPare
+&12 | BCP      | *     | &92     | &D2      | Backward ComPare
+&13 | BSU      | *     | &93     | &D3      | Backward SUbtract
+&14 | MUF      | *     | &94     | &D4      | MUltiply Fractional
+
+
+DUP duplicates the value on top of the stack.  USE pushes the stack and
+writes a literal value into W.  GET is an alias for USE().
+
+
+
 Hex | Opcode | Hex | Opcode | Meaning
 ----|--------|-----|--------|--------------------------------------
 &00 | RTS    | &80 | RTS    | RTS
