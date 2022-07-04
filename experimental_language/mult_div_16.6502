@@ -1,3 +1,4 @@
+\  NOW INCLUDES  (WE THINK)  ALL THE DYADIC OPERATIONS!
 \  STILL WORKS WITH MINIMAL MUCKING ABOUT
 \  NB! SOME ENTRY ADDRESSES HAVE CHANGED!
 
@@ -1318,7 +1319,7 @@ RTS
     LDX #code_ptr
     JSR put_for_stk     \  Bytes 6, 7 => continue address
     STY for_sp
-    RTS
+    JMP pull_W          \  Get next value from stack
     
 .put_for_stk
     LDY alt_sp
@@ -1411,7 +1412,9 @@ RTS
     JSR inc_code_ptr    \  Now points either to next instruction,
                         \  or to operand for this instruction.
     JSR do_instr
-    JMP get_instr
+.gi_next
+    RTS                 \  One ? can make this into a JMP
+    EQUW get_instr
 .do_instr
     ASL A
     TAX
@@ -1426,14 +1429,15 @@ RTS
     BMI core_USE        \  USE works like a monadic
     RTS
 ._di_not_DUP_USE
-    CPX #&28            \  first of the monadic operations
+    CPX #&2A            \  first of the implicit operations
     BCS _di_not_dyadic
     JMP dyadic
 ._di_not_dyadic
-    CPX #&2A            \  first of the implicit operations
-    BCC _di_monadic
+    CPX #&32            \  first of the monadic operations
+    BCS _di_not_implicit
     \JMP do_operation
     JMP (instr_addr)
+._di_not_implicit
 ._di_monadic
 
 \
@@ -1559,6 +1563,7 @@ RTS
 .oper_POW
 .oper_CMP
 .oper_BCP
+.oper_PAF
     RTS
 
 .oper_EOR
@@ -1649,6 +1654,10 @@ RTS
     JSR disp_dec_W
     JMP pull_W          \  replace what we just swallowed
 
+.oper_PUT
+    JSR core_PUT
+    JMP pull_W
+    
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 
@@ -1683,14 +1692,18 @@ ALIGN &100
     EQUW oper_BCP   \  11
     EQUW oper_BSU   \  12
     EQUW oper_MUF   \  13
-\  MONADIC OPERATIONS
-    EQUW oper_PRN   \  14
+    EQUW oper_PUT   \  14
+    EQUW oper_PAF   \  15
 \  IMPLICIT INSTRUCTIONS
-    EQUW &FFE7      \  oper_NWL
+    EQUW &FFE7      \  16 => oper_NWL
+    EQUW oper_FOR   \  17
+    EQUW oper_NXT   \  18
+\  MONADIC OPERATIONS
+    EQUW oper_PRN   \  19
 
 ._code_end
 
 SAVE "M.CODE", calc_stk, _code_end, _rts
 
 PRINT "init_calc_stk =", ~init_calc_stk
-
+PRINT "gi_next =", ~gi_next
