@@ -1,3 +1,6 @@
+\  STILL WORKS WITH MINIMAL MUCKING ABOUT
+\  NB! SOME ENTRY ADDRESSES HAVE CHANGED!
+
 \  TRYING TO BE SPARING WITH ZERO PAGE
 
 product=&70
@@ -39,15 +42,20 @@ osasci = &FFE3
 oswrch = &FFEE
 osword = &FFF1
 
-CLEAR &6F00,&7100
-ORG &7100
+instr_addr = &70FE
+
+CLEAR calc_stk, calc_stk + &FD
+ORG calc_stk + &FD
+
+.do_operation
+    JMP _rts
 
 .init_calc_stk
     JMP real_init_calc_stk
 .ext_disp_dec_stk
-    JMP disp_dec_stk
-.pushAX
-    JMP real_pushAX
+    JMP disp_dec_W
+.ext_get_instr
+    JMP get_instr
 .ext_mul_stk
     JMP mul_stk
 .ext_div_stk
@@ -185,18 +193,24 @@ ORG &7100
 
 \  DISPLAY A DECIMAL NUMBER FROM TOP OF STACK
 
-.disp_dec_stk
-    JSR decode_dec_stk
-._dds3
+.disp_dec_W
+    LDA W_reg+1
+    STA neg_flag
+    BPL _ddW_pos
+    JSR twc16_W
+._ddW_pos
+    JSR decode_dec_W
+._ddW3
     LDA neg_flag
-    BPL _dds4
+    BPL _ddW4
     LDA #45
-    JSR osasci
-._dds4
+    STA calc_stk,X
+    INX
+._ddW4
     LDA calc_stk-1,X
     JSR osasci
     DEX
-    BNE _dds4
+    BNE _ddW4
     RTS
     
 \  STORE STRING REPRESENTATION OF A NUMBER IN MEMORY
@@ -421,10 +435,10 @@ RTS
     STA calc_stk,Y
     RTS
 
-.twc16_rhs
+.twc16_O
     LDX #O_reg
     BNE twc16_zpX       \  always branches
-.twc16_lhs
+.twc16_W
     LDX #W_reg
 .twc16_zpX
     LDY calc_sp
@@ -442,6 +456,7 @@ RTS
 
 .mult16
 .real_mult16
+.oper_MUL
     LDA #0
     STA product+3
     STA product+2
@@ -513,6 +528,7 @@ RTS
 \  AND USING neg_flag TO INDICATE WHAT IF ANYTHING NEEDS TO BE MADE NEGATIVE
 \  AFTER THE OPERATION IS COMPLETE.
 
+.oper_DIV
 .signed_divide
     LDA #0
     STA remainder
@@ -687,90 +703,6 @@ RTS
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
-
-\  STACK MODE DYADIC OPERATION
-\
-\  Pull O from stack.
-\  Pull W from stack.
-\  Do operation.
-\  Push W to stack.
-\
-\  DIRECT MODE DYADIC OPERATION
-\  Load O from memory.
-\  Pretend to pull W.
-\  Do operation.
-\  Push W to stack.
-\
-\  INDIRECT MODE DYADIC OPERATION
-\  Load O from memory.
-\  Replace O with [O].
-\  Pretend to pull W.
-\  Do operation.
-\  Push W to stack.
-\
-
-.dyadic
-    BIT opcode
-    BPL _dyad_stk       \  bit 7 = 0 => stack mode
-    JSR copy_inst_O
-    BIT opcode
-    BVC _dyad_dir       \  bit 6 = 1 => indirect
-._dyad_indir
-    JSR indir_O
-    BVS _dyad_dir
-._dyad_dir
-    INC calc_sp         \  pretend to pull W ...
-    INC calc_sp         \  ... (which is already still there)
-    BNE _dyad_any       \  should never fall through
-._dyad_stk
-    LDX #O_reg
-    JSR pull16
-    LDX #W_reg
-    JSR pull16
-._dyad_any
-    LDA opcode
-    AND #&1F
-    ASL A
-    TAX
-    LDA instr_table, X
-    STA instr_addr
-    LDA instr_table+1, X
-    STA instr_addr+1
-    JSR do_operation
-    LDX #W_reg
-    JMP push16    
-.do_operation
-    JMP (instr_addr)
-.instr_addr
-    EQUW _rts
-    
-.copy_inst_O
-    LDA (code_ptr), Y
-    STA O_reg
-    INY
-    LDA (code_ptr), Y
-    STA O_reg+1
-    DEY
-    JMP inc_code_ptr2
-
-.inc_code_ptr2
-    JSR inc_code_ptr
-.inc_code_ptr
-    INC code_ptr
-    BNE _icp0
-    INC code_ptr+1
-    ._icp0
-    RTS
-    
-.indir_O
-    LDA (O_reg), Y
-    PHA
-    INY
-    LDA (O_reg), Y
-    STA O_reg+1
-    PLA
-    STA O_reg
-    RTS
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
@@ -1443,7 +1375,7 @@ RTS
     
 
 \  STORE THE W REGISTER AT THE ADDRESS POINTED TO BY THE STRING POINTER
-\  "SAFE" VERSION PUSHES Y ON 6502 STACK
+\  "SAFE" VERSION PUSHES Y ON 6502 STACK AND RESTORES AFTERWARDS
 
 .store_W_SP_S
     TYA
@@ -1461,7 +1393,262 @@ RTS
     STA (str_ptr), Y
     RTS
 
+.get_instr
+    LDY #0
+    LDA (code_ptr), Y
+    STA opcode          \  save this in its raw state
+    BPL _gi_stk         \  skip if Stack mode
+    CMP #&FF
+    BNE _gi_not_done
+._gi_done
+    BRK
+    EQUB 56
+    EQUS "Program finished"
+    BRK
+._gi_not_done
+    AND #&3F            \  mask out bit 6 in imm/ind modes
+._gi_stk
+    JSR inc_code_ptr    \  Now points either to next instruction,
+                        \  or to operand for this instruction.
+    JSR do_instr
+    JMP get_instr
+.do_instr
+    ASL A
+    TAX
+    LDA instr_table, X
+    STA instr_addr
+    LDA instr_table+1, X
+    STA instr_addr+1
+    TXA
+    BNE _di_not_DUP_USE
+    JSR push_W          \  duplicate the value on top of the stack
+    BIT opcode          \  see if it's DUP or a USE variant
+    BMI core_USE        \  USE works like a monadic
+    RTS
+._di_not_DUP_USE
+    CPX #&28            \  first of the monadic operations
+    BCS _di_not_dyadic
+    JMP dyadic
+._di_not_dyadic
+    CPX #&2A            \  first of the implicit operations
+    BCC _di_monadic
+    \JMP do_operation
+    JMP (instr_addr)
+._di_monadic
+
+\
+\  STACK MODE MONADIC OPERATION
+\  W is already top of stack.
+\  Do operation, leaving result in W.
+\
+\  DIRECT MODE MONADIC OPERATION
+\  Push stack
+\  Load W from memory.
+\  Do operation, leaving result in W / top of stack.
+\
+\  INDIRECT MODE MONADIC OPERATION
+\  Push stack
+\  Load W from memory.
+\  Replace W with [W].
+\  Do operation, leaving result in W / top of stack.
+
+.monadic
+    BIT opcode
+    BPL _monad_stk      \  bit 7 = 0 => stack mode
+    JSR push_W
+.core_USE
+    JSR copy_inst_W
+    BIT opcode
+    BVC _monad_dir      \  bit 6 = 1 => indirect
+._monad_indir
+    JSR indir_W         \  this won't touch V
+._monad_stk
+._monad_dir
+    \JMP do_operation
+    JMP (instr_addr)
+
+.indir_W
+    LDA (W_reg), Y
+    PHA
+    INY
+    LDA (W_reg), Y
+    STA W_reg+1
+    PLA
+    STA W_reg
+    RTS
+
+.push_W
+    LDX #W_reg
+    JMP push16
+
+\  W IS ALWAYS TOP-OF-STACK!
+\  STACK MODE DYADIC OPERATION
+\
+\  Put contents of W in O -- equivalent to pulling O from stack.
+\  Pull W from stack.
+\  Do operation, leaving result in W.
+\
+\  DIRECT MODE DYADIC OPERATION
+\  Load O from memory.  (W is already top of stack!)
+\  Do operation, leaving result in W / top of stack.
+\
+\  INDIRECT MODE DYADIC OPERATION
+\  Load O from memory.
+\  Replace O with [O].  (W is already top of stack!)
+\  Do operation, leaving result in W / top of stack.
+
+.dyadic
+    BIT opcode
+    BPL _dyad_stk       \  bit 7 = 0 => stack mode
+    JSR copy_inst_O
+    BIT opcode
+    BVC _dyad_dir       \  bit 6 = 1 => indirect
+._dyad_indir
+    JSR indir_O         \  this won't touch V
+    BVS _dyad_dir
+._dyad_stk
+    JSR copy_W_O        \  now O = old top of stack
+    JSR pull_W          \  now W = old second on stack
+._dyad_dir
+    \JMP do_operation
+    JMP (instr_addr)
     
+.copy_inst_W
+    LDX #W_reg
+    BNE copy_inst
+.copy_inst_O
+    LDX #O_reg
+.copy_inst
+    LDY #0
+    LDA (code_ptr), Y
+    STA 0,X
+    INY
+    LDA (code_ptr), Y
+    STA 1,X
+    DEY
+.inc_code_ptr2
+    JSR inc_code_ptr
+.inc_code_ptr
+    INC code_ptr
+    BNE _icp0
+    INC code_ptr+1
+._icp0
+    RTS
+    
+.indir_O
+    LDA (O_reg), Y
+    PHA
+    INY
+    LDA (O_reg), Y
+    STA O_reg+1
+    PLA
+    STA O_reg
+    RTS
+
+.copy_W_O
+    LDX #O_reg
+.copy_W_out
+    LDA W_reg
+    STA 0,X
+    LDA W_reg+1
+    STA 1,X
+    RTS
+    
+    
+.oper_USE
+.oper_POW
+.oper_CMP
+.oper_BCP
+    RTS
+
+.oper_EOR
+    LDA W_reg
+    EOR O_reg
+    STA W_reg
+    LDA W_reg+1
+    EOR O_reg+1
+    STA W_reg+1
+    RTS
+    
+.oper_ORI
+    LDA W_reg
+    ORA O_reg
+    STA W_reg
+    LDA W_reg+1
+    ORA O_reg+1
+    STA W_reg+1
+    RTS
+
+.oper_AND
+    LDA W_reg
+    AND O_reg
+    STA W_reg
+    LDA W_reg+1
+    AND O_reg+1
+    STA W_reg+1
+    RTS
+
+.oper_MOD
+    JSR signed_divide   \  do the division
+._copy_X_W              \  copy X register over W
+    LDA X_reg
+    STA W_reg
+    LDA X_reg+1
+    STA W_reg+1
+    RTS
+    
+.oper_MUF
+    JSR mult16
+    JMP _copy_X_W
+
+.oper_BSU
+    SEC
+    LDA O_reg
+    SBC W_reg
+    STA W_reg
+    LDA O_reg+1
+    SBC W_reg+1
+    STA W_reg+1
+    RTS
+
+\  DECODE A HEX NUMBER IN W AND STORE ITS ASCII REPRESENTATION AT THE
+\  FAR END OF THE CALCULATION STACK.
+
+.decode_hex_W
+    LDA #16
+    BNE decode_baseA_W
+    
+\  DECODE A DECIMAL NUMBER IN W AND STORE ITS ASCII REPRESENTATION AT THE
+\  FAR END OF THE CALCULATION STACK.
+    
+.decode_dec_W
+    LDA #10
+.decode_baseA_W
+    JSR set_divisor
+    TAX                 \  we know A=0 here
+._ddW1
+    JSR real_div16
+    \  Store the digit's ASCII code in scratch space
+    LDA remainder
+    CLC
+    ADC #48
+    CMP #58             \  see if we need to correct a hex digit
+    BCC _ddW2
+    ADC #6              \  here, C=1 so we add one fewer than we need
+._ddW2
+    STA calc_stk,X
+    INX
+    \  See if working total has reached zero
+    LDA dividend
+    ORA dividend+1
+    BNE _ddW1
+._ddW_end
+    RTS
+
+.oper_PRN
+    JSR disp_dec_W
+    JMP pull_W          \  replace what we just swallowed
+
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 
@@ -1475,19 +1662,31 @@ RTS
 ALIGN &100
 
 .instr_table
-    EQUW _rts           \ 00 => RTS
-    EQUW real_dup       \ 01 => DUP
-    EQUW read_word_stk  \ 02 => RDW
-    EQUW write_word_stk \ 03 => WRW
-    EQUW disp_dec_stk   \ 04 => PRN
-    EQUW vdu_stk        \ 05 => VDU
-    EQUW vdw_stk        \ 06 => VDW = two-byte VDU;
-    EQUW mul_stk        \ 07 => MUL
-    EQUW div_stk        \ 08 => DIV
-    EQUW real_mod_stk   \ 09 => MOD
-    EQUW add16_stk      \ 0A => ADD
-    EQUW sub16_stk      \ 0B => SUB
-    
+    EQUW oper_USE   \  00       DUP and USE are special
+\  DYADIC OPERATIONS
+    EQUW oper_EOR   \  01
+    EQUW oper_ORI   \  02
+    EQUW oper_AND   \  03
+    EQUW oper_ADD   \  04
+    EQUW oper_SUB   \  05
+    EQUW oper_MUL   \  06
+    EQUW oper_DIV   \  07
+    EQUW oper_MOD   \  08
+    EQUW oper_POW   \  09
+    EQUW oper_TEQ   \  0A
+    EQUW oper_TNE   \  0B
+    EQUW oper_TLT   \  0C
+    EQUW oper_TGE   \  0D
+    EQUW oper_TGT   \  0E
+    EQUW oper_TLT   \  0F
+    EQUW oper_CMP   \  10
+    EQUW oper_BCP   \  11
+    EQUW oper_BSU   \  12
+    EQUW oper_MUF   \  13
+\  MONADIC OPERATIONS
+    EQUW oper_PRN   \  14
+\  IMPLICIT INSTRUCTIONS
+    EQUW &FFE7      \  oper_NWL
 
 ._code_end
 
