@@ -13,6 +13,17 @@ calculation to perform a higher-priority operation.  For instance, when we encou
 expression such as `A + B * C` we start with A, get ready to add, get B, notice that * has
 a higher priority than +, multiply B by C, and this product is the thing we have to add to A.
 
+If the operation stack is empty, or the top of the operation stack is `(`, we always push
+the operation onto the operation stack.
+
+If the new operation has equal or lower priority than the operation on top of the
+operation stack, then that operation is added to the program and the new operation is
+placed on top of the operation stack.
+
+If the new operation has a higher priority than the operation on top of the operation stack,
+then the new operation is pushed onto the operation stack.
+
+
 `A + B * C`
 + Value A: get on top of value stack
 + Double-ended operator + : push on operation stack
@@ -34,7 +45,14 @@ A value may be consist of:
 + A memory access, such as `P%?3`
 + An array access, such as `S%(160-I%)`
 
+In the simplest cases, a `USE constant` or `USE (location)` instruction is added to the program.
+Array and memory accesses might well result in a series of instructions being added; but in any
+case, the program will be extended so as to push the desired value onto the top of the Stack.
+
 After parsing a value, we expect either a double-ended operator or the end of the expression.
+
+_Possible extension: if a value is followed by a value, a multiply sign * will be inserted
+between the two values._
 
 ### NUMERIC CONSTANTS
 
