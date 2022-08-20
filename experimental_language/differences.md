@@ -1,14 +1,18 @@
 # DIFFERENCES FROM BBC BASIC
 
+The syntax is intended to be compatible with a broad subset of BBC BASIC,
+so BBC BASIC should be able to interpret source programs directly.
+
 
 
 ## GENERAL
 
-All mathematical operations are done in 16-bit integer mode.  No error is generated
-if a value goes out of range.  The built-in multiplication / division engine is
-actually capable of giving a 32-bit product and accepting a 32-bit dividend; so it
-is possible, with due care, to multiply two numbers giving an out-of-range product
-and immediately divide this by something that will bring it into range.
+All mathematical operations are done in 16-bit signed integer mode.  No
+error is generated if a value goes out of range.  The built-in
+multiplication / division engine is actually capable of giving a 32-bit
+product and accepting a 32-bit dividend; so it is possible, with due care,
+to multiply two numbers giving an out-of-range product and immediately
+divide this by something that will bring it into range.
 
 ## THE ! OPERATOR
 
@@ -50,12 +54,17 @@ a program to crash.
 
 ## PRINT +
 
-In a `PRINT` statement, the `+` modifier causes the next value to be printed as an
-unsigned value.  For instance, `PRINT +(30000+10000)` prints `40000` whereas
-`PRINT 30000+10000` prints `-23256`.
+In a `PRINT` statement, the `+` modifier causes the next value to be
+printed as an _unsigned_ value.  For instance, `PRINT +(30000+10000)`
+prints `40000` whereas `PRINT 30000+10000` would print `-23256`.
 
-This modifier is valid syntax as far as BBC BASIC is concerned; it is treated as
-unary + and effectively ignored.
+This modifier is valid syntax as far as BBC BASIC is concerned; it is
+treated as unary + and effectively ignored, since BBC BASIC can already
+cope with numbers between 32768 and 65535.
+
+## VARIABLE NAMES
+
+% is a legal character anywhere in a variable name.
 
 ## ARRAYS
 
@@ -70,6 +79,10 @@ the zero subscript of an array, you may need to increase its size.
 
 It is intended to provide some extensions which will be incompatible with BBC BASIC
 (although the program can still be edited, `SAVE`d and compiled).
+
+## BINARY CONSTANTS
+
+Binary constant values may be specified using the % prefix.
 
 ## BIT ARRAYS
 
@@ -100,5 +113,33 @@ address of another, separate 20-byte block.
 
 ## COLOUR
 
-`COLOUR` can accept more than one parameter; so `COLOUR 135,4,8` would give flashing
-blue text on a white background
+`COLOUR` can accept more than one parameter; so `COLOUR 135,4,8` in
+MODE 7 would give flashing blue text on a white background.
+
+## MULTI-LINE IF
+
+It is intended to provide `IF` - `THEN` - `ELIF` - `THEN` - `ELSE` - `FI`
+structures with the `THEN` and `ELSE` clauses spanning multiple lines.
+
+# DIFFERENCES IN BEHAVIOUR BETWEEN COMPILING AND INTERPRETING
+
+It is possible for a program to run correctly in an interpreter, but fail
+to compile due to a syntax error somewhere in the code which is never
+reached in practice.  For instance, the line
+`IF FALSE WIBBLE ELSE PRINT "BLAH"`
+would not produce an error, because the interpreter never attempts to
+interpret the `WIBBLE`.  But the compiler must compile both the `THEN`
+and `ELSE` clauses, without regard to whether the `IF` test will succeed
+or not until the program is run; and so will fail at `WIBBLE`.
+
+## COMPILING
+
+When compiling a program, every line is taken into account.
+
+When building up a symbol table for compiling, the two bytes that would
+ordinarily hold the value are used instead to hold the location for that
+variable.
+
+If the symbol table is attached to a compiled program, it should be
+possible to decompile the program and restore the variable names.
+
