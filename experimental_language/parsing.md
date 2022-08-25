@@ -126,5 +126,9 @@ value.
 
 ## PARSING AN EXPRESSION
 
+The string pointer `str_ptr` always points to the beginning of the item being
+parsed.  If a match is found, the Y register will contain the offset to the
+first byte after the matched item, which may be the beginning of the next item
+or the end of a line.
 
 
