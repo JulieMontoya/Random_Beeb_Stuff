@@ -124,11 +124,199 @@ value.
 
 
 
-## PARSING AN EXPRESSION
+# PARSING AN EXPRESSION
 
 The string pointer `str_ptr` always points to the beginning of the item being
 parsed.  If a match is found, the Y register will contain the offset to the
 first byte after the matched item, which may be the beginning of the next item
 or the end of a line.
 
+The expression parser always begins in the state "expecting a value", and with
+the "last instruction was USE" flag clear.
 
+
+_Parsing an expression must be re-entrant!  In the course of parsing an expression,
+we may encounter a function call or array access which requires further expressions
+to be parsed.  It will be necessary to push the parser state on the 6502 stack at
+the beginning of an expression, and restore it afterwards._
+
+
+## SEARCHING FOR A VALUE
+
+Any spaces are skipped, until `str_ptr` points to a non-space character in the
+expression buffer.  The 6502 Y register is initialised with 0.
+
+### SINGLE-ENDED OPERATOR
+
+If the item matched a single-ended operator  (including an opening bracket; which
+is permitted as the first character of a value, since a bracketed expression is
+itself a value),  it is processed as follows:
++ If the item is an opening bracket, ( is pushed on the operation stack with priority &01.
++ If the item is any other single-ended operator, it is pushed on the operation stack with priority &0E.
+The parser state remains "expecting a value".  The "last instruction was USE" flag
+is cleared.
+
+`str_ptr` is adjusted to point to the first character after the item matched.
+
+### NUMERIC CONSTANT
+
+If no single-ended operator was matched, the item is checked to see it it is a
+numeric constant; either decimal  (beginning with a digit 0-9),  hexadecimal
+(an & sign followed by digits 0-9 and A-F)  or binary  (a % sign followed by
+digits 0 and 1).  _Binary constants are an extension over BBC BASIC._
+
+If a numeric constant is matched, a `USE` instruction is appended to the program
+and the "last instruction was USE" flag is set.
+
+If the operation on top of the operation stack is single-ended with priority &0E,
+and "last was USE" is set, the last instruction of the program is changed from `USE`
+to the appropriate addressing mode version  (immediate for a constant, or indirect
+for a variable)  of the instruction popped from the stack, and the "last instruction
+was USE" flag is cleared.  If the operation on top of the operation stack has 
+priority &0E but "last was use" is not set, the instruction popped from the stack
+is appended to the program as a stack mode instruction.
+
+This is repeated until either the operation stack is empty, or the top operation is
+a double-ended one or an opening bracket.
+
+After parsing a numeric constant, the parser state is changed to "expecting an
+operator".  The state of the "last instruction was USE" flag will be dependent upon
+whether there were any single-ended operators before the value.  `str_ptr` is
+updated to point to the first character after the value.
+
+### VARIABLE
+
+If the item does not match a numeric constant, it is matched against variables in
+the symbol table.  If the item matches a known variable, a `USE (indirect)` instruction
+is appended to the program and the "last instruction was USE" flag is set.
+
+If the operation on top of the operation stack is single-ended with priority &0E,
+and "last was USE" is set, the last instruction of the program is changed from `USE`
+to the appropriate addressing mode version  (immediate for a constant, or indirect
+for a variable)  of the instruction popped from the stack, and the "last instruction
+was USE" flag is cleared.  If the operation on top of the operation stack has 
+priority &0E but "last was use" is not set, the instruction popped from the stack
+is appended to the program as a stack mode instruction.
+
+This is repeated until either the operation stack is empty, or the top operation is
+a double-ended one or an opening bracket.
+
+After parsing a variable, the parser state is changed to "expecting an operator".
+The state of the "last instruction was USE" flag will be dependent upon whether there
+were any single-ended operators before the value.  `str_ptr` is updated to point to
+the first character after the variable name.
+
+### END OF EXPRESSION (BAD)
+
+If the item does not match an opening bracket, single-ended operator, numeric constant
+or existing variable, a syntax error is generated.
+
+## SEARCHING FOR AN OPERATOR
+
+Any spaces are skipped, until `str_ptr` points to a non-space character in the
+expression buffer.  The 6502 Y register is initialised with 0.
+
+If the item matched a double-ended operator  (including a closing bracket; which may be
+permitted as an end-of-value marker)  then it is processed as follows:
+
+### CLOSING BRACKET
+
+If a closing bracket is encountered, this marks the end of a value.
+
+If the operation stack is not empty and the operation on top of the stack is
+not an opening bracket, the program is grown.  If the "last instruction was USE"
+flag is set, the last instruction of the program is changed from `USE` to the
+appropriate addressing mode version  (immediate for a constant, or indirect
+for a variable)  of the operation popped from the stack, and the "last instruction
+was USE" flag is cleared.  Otherwise, the new operation is appended to the program
+as a stack mode instruction.
+
+This is repeated until the operation on top of the stack is an opening bracket
+(or the stack is empty, which creates a syntax error).  The opening bracket is
+popped from the stack.  The parser state is set to "expecting an operator" without
+affecting the "last was use" flag  (which thus remains set if the only thing inside
+the brackets was a constant or variable, even through multiple nested brackets).
+`str_ptr` is adjusted to point to the first character after the item matched.
+
+### HIGH-PRIORITY OPERATION
+
+If the operation stack is empty, or the new operation priority is higher than
+the priority of the operation on top of the stack, the new operation is pushed
+onto the operator stack.  (The low priority &01 of an opening bracket ensures
+the next operation will always be pushed onto the stack.)  The "last instruction
+was USE" flag is cleared.  `str_ptr` is updated to point to the first character
+after the operator matched.
+
+### LOW-PRIORITY OPERATION
+
+If the new operation priority is the same as or lower than the priority of the
+operation on top of the stack, the operation on top of the stack is used to grow
+the program.  If the "last instruction was USE" flag is set, the last instruction
+of the program is changed from `USE` to the appropriate addressing mode version
+(immediate for a constant, or indirect for a variable)  of the operation popped
+from the stack, and the "last instruction was USE" flag is cleared.  Otherwise,
+the new operation is appended to the program as a stack mode instruction. 
+
+If we popped an operation from the stack, we test the new operation against the
+new top-of-stack.
+
+`str_ptr` is updated to point to the first character after the operator matched.
+
+### END OF EXPRESSION (GOOD)
+
+If the item being parsed did not match a valid double-ended operator, this is
+considered to be the end of the expression.
+
+If the operation stack is not empty, the program is grown.  If the "last instruction
+was USE" flag is set, the last instruction of the program is changed from `USE` to
+the appropriate addressing mode version  (immediate for a constant, or indirect
+for a variable)  of the operation popped from the stack, and the "last instruction
+was USE" flag is cleared.  Otherwise, the new operation is appended to the program
+as a stack mode instruction.
+
+This is repeated until the operation stack is empty.  The parser state is set to
+"success".
+
+By this point, the program has grown to evaluate the expression and leave the value
+in the virtual machine's W register.
+
+## GROWING THE PROGRAM
+
+The program is built up as a representation of the expression being parsed, with
+variable values fetched from their locations in memory and operations applied as
+necessary.  When the complete expression has been parsed, the program generated
+will be such as to leave the result in the W register with the Stack beneath it
+unaltered.
+
+A constant such as `&1900` is represented in the program correcponding to the
+expression by an immediate-mode `USE` instruction.  A variable access such as `W%`
+is represented by an indirect-mode `USE(addr)` instruction.
+
+The parser state includes a flag indicating that the last instruction appended to
+the program was `USE`.
+
+Instead of appending a stack-mode instruction with immediate and indirect mode
+equivalents after a `USE` instruction, the `USE` is altered in place to be the
+new instruction, in the same addressing mode as the original `USE`.
+
+# OPERATOR PRIORITIES
+
+Priority | Operation
+--------:|--------------------------
+&01      | Open bracket
+&02      | Logic `EOR`, `OR`
+&03      | Logic `AND`
+&04      | Addition and subtraction
+&05      | Multiplication, division and modulus
+&06      | Powers
+&08      | Comparisons `<`, `=`, `>`, `<=`, `<>`, `>=`
+&0E      | Single-ended operations
+&0F      | Close bracket
+
+A higher number means a higher priority: an operation in progress may be suspended
+temporarily in order to perform a higher-priority operation.
+
+An opening bracket is treated as an operator with priority 1; any higher-priority
+operation will always be placed on top of it on the operation stack.  When the
+corresponding closing bracket is encountered, operations are popped from the
+operation stack until the ( returns to the top of the stack, whence it is popped.  
