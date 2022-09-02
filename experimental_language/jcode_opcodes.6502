@@ -1,0 +1,38 @@
+\  J-CODE OPCODES
+
+opc_USE = &00
+
+opc_EOR = &01
+opc_ORI = &02
+opc_AND = &03
+opc_ADD = &04
+opc_SUB = &05
+opc_MUL = &06
+opc_DIV = &07
+opc_MOD = &08
+opc_POW = &09
+opc_TEQ = &0A
+opc_TNE = &0B
+opc_TLT = &0C
+opc_TGE = &0D
+opc_TGT = &0E
+opc_TLE = &0F
+opc_CMP = &10
+opc_BCP = &11
+opc_BSU = &12
+opc_MUF = &13
+opc_DIP = &14
+opc_PUT = &15
+opc_PAF = &16
+
+opc_NCH = &17
+opc_TWC = &18
+opc_ONC = &19
+opc_SGN = &1A
+opc_ABS = &1B
+opc_RDW = &1C
+opc_RDB = &1D
+
+
+opc_OPB = &3D           \  open bracket (pseudo-op)
+opc_CLB = &3E           \  close bracket (pseudo-op)
