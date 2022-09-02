@@ -1,0 +1,1281 @@
+\  The expression parser is still not re-entrant .....
+
+\  This version includes some debugging that is no longer needed.
+
+\  Possible problem: Characters 0-9 should be allowed in variable names,
+\  just not as the first character.
+\  Now supports this correctly.
+\  It's a bit more forgiving than BBC BASIC;
+\  % is allowed anywhere in a variable name except the first character
+\  @ [ \ ] and ^ are allowed in variable names
+\  I am not treating this as a serious bug -- JKLM
+
+\  Still need to add parsing a numeric constant.
+\  This will require multiply and divide code.
+\  Will hard-code in for now and sort out details later.
+
+\  ZERO PAGE
+
+product=&70
+multiplicand=&74
+multiplier=&70
+preload=&72
+dividend=&70
+divisor=&74
+quotient=&70
+remainder=&72
+
+W_reg = &70
+X_reg = &72
+O_reg = &74
+
+oper_sp   = &78
+parse_st  = &79
+neg_flag  = &7F
+
+str_ptr   = &82
+temp_pri  = &86
+temp_opc  = &87
+code_ptr  = &88
+basic_ptr = &8C
+
+var_ptr   = &76
+
+\  No need to track end of symbol table: we only ever need to grow it after
+\  a failed search, whereupon we will already have found it the slow way.
+
+rnd_seed = &0D          \  BBC BASIC uses this as RND seed
+
+oper_stack = &7000
+
+osasci = &FFE3
+osnewl = &FFE7
+oswrch = &FFEE
+osword = &FFF1
+
+INCLUDE "jcode_opcodes.6502"
+
+ORG &7000
+
+._code_begin
+CLEAR P%,P%+&100
+
+ORG &7100
+
+\.ext_test_var
+\    JMP test_var
+
+.ext_parse_item
+    JMP parse_item
+
+\.ext_create_var
+\   JMP create_var
+
+.ext_parse_expr
+    JMP parse_expr
+    
+.ext_match_deo
+    JMP parse_de_oper
+
+.ext_parse_value
+    JMP parse_value
+
+.ext_skip_space
+    JMP skip_space
+
+.ext_match_seo
+    JMP match_se_oper
+    
+\\\\.ext_parse_hex
+\\\\    JMP parse_hex
+    
+\\\\._ext_parse_bin
+\\\\    JMP parse_bin
+
+\\\\.ext_disp_hex
+\\\\    JMP disp_hex
+
+.parse_expr
+    LDA #%00000000
+    \     || `-.-'
+    \     ||   |
+    \     ||   stack depth = 0
+    \     |`-- last was not use
+    \     `--- expect a value
+    STA parse_st        \  initialise parser state
+._parse_expr1
+    LDY #0
+    JSR parse_item
+    BCC _parse_expr1    \  keep going till done
+    RTS
+    
+.parse_item
+    BIT parse_st        \  parser state
+    BMI _pi_de_op       \  Z=1 => expecting operator
+    JMP parse_value     \  Z=0 => expecting value
+._pi_de_op
+    JMP parse_de_oper
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  PARSE A VALUE
+\  - A VALUE CAN BE ANY OF;
+\    - A SINGLE-ENDED OPERATOR WITH A VALUE AFTER IT
+\    - A NUMERIC CONSTANT
+\    - AN EXISTING VARIABLE
+\      (WE'LL DEAL WITH ARRAYS LATER)
+
+.parse_value
+    JSR skip_space      \  skip spaces
+    CMP #&0D
+    BNE _pv_not_end
+._pv_is_end
+    JSR say
+    EQUS "End of expression"
+    EQUB 13
+    SEC                 \  C=1 => end of expression
+    RTS
+._pv_not_end
+    \  FIRST TRY FOR A SINGLE-ENDED OPERATION
+    JSR match_se_oper
+    BCC _pv_is_seo
+    \  NEXT TRY FOR A NUMERIC CONSTANT
+    JSR parse_num
+    BCC _pv_is_num
+    \  NEXT TRY FOR A VARIABLE
+    JSR test_var
+    BCC _pv_is_var
+    \  MUST BE AN UNKNOWN VARIABLE OR SYNTAX ERROR
+    JSR say
+    EQUS "Not S/E op, const or var at &"
+    BRK
+    LDX #str_ptr
+    JSR disp_16bit_X
+    JSR osnewl
+    SEC                 \  C=1 => end of expression
+    RTS
+    
+._pv_is_seo
+    PHA
+    LDX #str_ptr        \  Move pointer past matched operation
+    JSR adv_ptr_X
+    PLA
+    
+    \  PUSH THE SINGLE-ENDED OPERATION ONTO THE OPERATION STACK
+    \  AND CLEAR THE "LAST WAS USE" FLAG
+
+    LDX #&0E            \  dummy priority for S/E op
+    PHA
+    CMP #opc_OPB
+    BNE _pv_not_opb
+    LDX #&01            \  open bracket has priority &01
+._pv_not_opb
+    JSR push_op_stack
+    LDA parse_st
+    AND #&3F            \  not expecting a d/e operator, last was not use
+    STA parse_st
+    PLA
+    JMP _tell_seo
+    
+._pv_is_num
+    LDX #str_ptr        \  Move pointer past number
+    JSR adv_ptr_X
+    
+    \  GROW THE PROGRAM WITH A "USE" OPERATION
+
+    LDA #&80            \  USE immediate
+    LDX #W_reg          \  operand is in VM W register
+    JSR grow_use
+    
+    \  AND SET THE "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
+    
+    JSR _after_use
+
+    \LDA parse_st
+    \ORA #&C0            \  80 => expect d/e op; 40 => last was use
+    \STA parse_st
+
+    JMP _tell_const
+
+._pv_is_var
+    LDX #str_ptr        \  Move pointer past variable name
+    JSR adv_ptr_X
+
+    \  GROW THE PROGRAM WITH A "USE()" OPERATION
+    \  BYTE 0 = &C0 => USE()
+    \  BYTE 1 = [var_ptr]
+    \  BYTE 2 = [var_ptr+1]
+
+    LDA #&C0            \  USE (indirect)
+    LDX #var_ptr        \  operand is in var_ptr
+    JSR grow_use
+
+    \  AND SET THE "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
+    JSR _after_use
+    
+    \LDA parse_st
+    \ORA #&C0            \  80 => expect d/e op; 40 => last was use
+    \STA parse_st
+
+    JMP _tell_var
+
+\  AFTER A "USE", SET "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
+
+._after_use
+    LDA parse_st
+    ORA #&C0            \  80 => expect d/e op; 40 => last was use
+    STA parse_st
+    RTS
+    
+._tell_seo
+    PHA
+    JSR say
+    EQUS "Single ended operation "
+    BRK
+    PLA
+    PHA
+    JSR disp_hex
+    JSR osnewl
+    PLA
+    CLC                 \  C=0 => more to parse
+    RTS
+
+._tell_const
+    JSR say
+    EQUS "Numeric constant &"
+    BRK
+    JSR disp_W
+    JSR osnewl
+    CLC                 \  C=0 => more to parse
+    RTS
+
+._tell_var
+    JSR say
+    EQUS "Variable at &"
+    BRK
+    LDX #var_ptr
+    JSR disp_16bit_X
+    JSR osnewl
+    CLC                 \  C=0 => more to parse
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  PARSE STATE
+\  BIT 7    => IF 1, EXPECT OPERATOR; IF 0, EXPECT VALUE
+\  BIT 6    => IF 1, LAST INSTRUCTION WAS "USE"
+\  BITS 5-0 => COUNT OF ITEMS ON OPERATION STACK
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MATCH A DOUBLE-ENDED OPERATOR
+\  EXPRESSION TO BE MATCHED IS POINTED TO BY str_ptr
+\  ON EXIT, C=0 => NO MATCH
+\           C=1 => MATCH; A = OPCODE, X = PRIORITY
+
+\  As long as the whole of the table we are searching fits into one page,
+\  we don't need to use a zero-page pointer.
+
+.parse_de_oper
+    JSR skip_space      \  skip any spaces
+    CMP #&0D
+    BNE _deo_not_end
+    JMP _deo_is_end
+._deo_not_end
+    JSR match_de_oper
+    BCC _deo_ok
+    JSR say
+    EQUS "Not a D/E operator"
+    EQUB 13
+    RTS
+._deo_ok
+    STA temp_opc
+    STX temp_pri
+    LDX #str_ptr        \  Move pointer past matched operation
+    JSR adv_ptr_X
+    
+    \  CLOSING BRACKET IS PARSED AS A D/E OPERATOR.
+
+    LDA temp_opc
+    CMP #opc_CLB        \  see it it was a closing bracket
+    BNE _deo_not_clb
+
+    \  GROW THE PROGRAM WITH OPERATIONS FROM THE OPERATION STACK UNTIL WE
+    \  REACH AN OPENING BRACKET.  THEN POP THAT, AND CONTINUE AS THOUGH WE
+    \  HAD JUST PARSED A VALUE.
+    \  CLEAR THE "LAST WAS USE" FLAG BUT SET "EXPECT D/E OP"
+
+._deo_is_clb
+    LDY oper_sp
+    LDA oper_stack+1, Y \  priority of operation on top of stack
+    CMP #1              \  see if it is 1 => (
+    BEQ _deo_clb1
+    LDA parse_st        \  parser state
+    AND #&3F            \  get just stack length
+    BEQ _deo_clb2       \  terminate if stack is empty
+    \JSR pull_op_stack
+    JSR grow_or_alter
+    JMP _deo_is_clb
+._deo_clb1
+    INC oper_sp         \  discard priority from operation stack ...
+    INC oper_sp         \  ... and discard the operation
+._deo_clb2
+    JMP _tell_clb
+    
+._deo_not_clb
+
+    \  IF THE OPERATION STACK IS CLEAR, OR THE OPERATION ON THE TOP OF
+    \  THE STACK HAS A STRICTLY LOWER PRIORITY THAN THE NEW ONE, THEN
+    \  WE PUSH THE OPERATION TO THE STACK.  (AN OPENING BRACKET HAS THE
+    \  LOWEST PRIORITY OF ALL, SO WE CAN ALWAYS PUSH ONTO IT.)
+    \
+    \  OTHERWISE, WE GROW THE PROGRAM.  IF THE LAST OPERATION WAS USE,
+    \  THEN TO SAVE SPACE WE JUST ALTER ITS OPCODE IN SITU.
+    \  CLEAR THE "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
+
+    LDA parse_st        \  parser state
+    AND #&3F            \  get just stack length
+    BEQ _deo_push       \  can always push onto an empty stack
+    LDY oper_sp
+    LDA oper_stack+1, Y \  priority of operation on top of stack
+    CMP temp_pri
+    BCC _deo_push       \  push if new op is higher priority
+    
+    \  IF NEW OPERATION HAS AN EQUAL OR LOWER PRIORITY THEN PERFORM
+    \  THE (EQUAL OR HIGHER-PRIORITY) OPERATION FROM THE STACK AND
+    \  GO AROUND AGAIN
+    
+    \JSR say
+    \EQUS "Doing op from stack instead."
+    \EQUB 13
+    JSR grow_or_alter
+    JMP _deo_not_clb
+    
+._deo_push              \  PUSH OPERATION AND PRIORITY ON STACK
+    LDA temp_opc
+    LDX temp_pri
+    JSR push_op_stack
+    LDA parse_st
+    AND #&7F            \  expect value; preserve "last was use"
+    STA parse_st
+    JMP _tell_deo
+    
+._deo_is_end
+    JSR say
+    EQUS "End of expression"
+    EQUB 13
+    
+    \  IF THERE ARE ANY OPERATIONS ON THE OPERATION STACK, THEY
+    \  NEED TO BE APPENDED TO THE PROGRAM
+    
+._deo_end0
+    LDA parse_st        \  parser state
+    AND #&3F            \  get just stack length
+    BEQ _deo_end1
+    JSR grow_or_alter
+    JMP _deo_end0
+._deo_end1
+    SEC                 \  C=1 => end of expression
+    RTS
+
+._tell_clb
+    JSR say
+    EQUS "Closing bracket "
+    BRK
+    LDA temp_opc
+    JSR disp_hex
+    JSR say
+    EQUS " priority "
+    BRK
+    LDA temp_pri
+    JSR disp_hex
+    JSR osnewl
+    CLC                 \  C=0 => more to parse
+    RTS
+
+._tell_deo
+    JSR say
+    EQUS "Double ended operation "
+    BRK
+    LDA temp_opc
+    JSR disp_hex
+    JSR say
+    EQUS " priority "
+    BRK
+    LDA temp_pri
+    JSR disp_hex
+    JSR osnewl
+    CLC                 \  C=0 => more to parse
+    RTS
+
+.match_de_oper
+    LDX #0              \  X is pointer into dictionary
+._deo_new_oper
+    LDY #0              \  Y is pointer into expression
+    LDA d_e_opers, X
+    BEQ _deo_end_of_list
+._deo_test
+
+    \  If we see a value < 32 in the operators table, this is the
+    \  priority and means we have matched the whole operator.
+    \  The byte following the priority is the opcode.
+
+    LDA d_e_opers, X
+    CMP #32             \  priority is always < &20
+    BCC _deo_match      \  we have matched whole operator
+    CMP (str_ptr), Y
+    BNE _deo_no_match
+    INX                 \  next character in operator list
+    INY                 \  next character in expression
+    BNE _deo_test       \  not expected to fall through
+._deo_match
+    LDA d_e_opers+1, X  \  opcode
+    PHA                 \  stash it
+    LDA d_e_opers, X    \  priority
+    TAX                 \  X = priority
+    PLA                 \  retrieve opcode
+    CLC                 \  C=0 => match
+    RTS
+    
+    \  If the character in the expression did not match the one in the
+    \  operators table, we need to skip to the next operator; there is
+    \  always a byte < 32 followed by another byte, before it.
+    
+._deo_no_match
+    LDA d_e_opers, X
+    CMP #32
+    BCC _deo_pri
+    INX
+    BNE _deo_no_match   \  not expected to fall through
+._deo_pri
+    INX                 \  skip priority
+    INX                 \  skip opcode
+    BNE _deo_new_oper
+._deo_end_of_list
+    SEC                 \  C=1 => no match
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  TRY TO MATCH A VARIABLE NAME AT str_ptr AGAINST A NAME IN THE SYMBOL
+\  TABLE.
+\  ON EXIT, C=1 => NO MATCH; var_ptr => END OF SYMBOL TABLE
+\           C=1 => MATCHED;  var_ptr => VALUE
+\                            Y => OFFSET FROM str_ptr TO CHAR. AFTER NAME
+
+.test_var
+    LDA #symbol_table MOD 256
+    STA var_ptr
+    LDA #symbol_table DIV 256
+    STA var_ptr+1
+    LDY #1                  \  look at second character of name
+    LDA (str_ptr), Y
+    CMP #37                 \  % sign
+    BNE _tv_new_name
+    INY
+    LDA (str_ptr), Y        \  look at third character
+    CMP #40                 \  opening (
+    BEQ _tv_new_name        \  process as normal if is an array
+    DEY
+._tv_maybe_static           \  maybe it's a static variable @%-Z%
+    DEY
+    LDA (str_ptr), Y        \  get first character
+    CMP #91                 \  [ (after Z)
+    BCS _tv_new_name        \  not a static variable
+._tv_static
+    \  THIS IS A STATIC VARIABLE @%-Z%, WHICH ARE STORED IN PAGE 4
+    \  NOTE; BBC BASIC USES 4 BYTES, BUT WE ONLY CARE ABOUT THE BOTTOM 2
+    AND #&1F                \  get bits 0-5
+    ASL A                   \
+    ASL A                   \  multiply by 4
+    STA var_ptr             \  low bit of address
+    LDA #4                  \
+    STA var_ptr+1           \  high bit of address
+    LDY #2                  \  point to 1st character after var.name
+    CLC                     \  C=0 => match
+    RTS
+._tv_new_name
+    \\\\JSR disp_var_ptr    \  DEBUGGING
+    LDY #0
+    LDA (var_ptr), Y
+    BEQ _tv_end_of_vars
+._tv_test
+    LDA (var_ptr), Y
+    CMP #32
+    BCC _tv_match
+    CMP (str_ptr), Y
+    BNE _tv_no_match
+    INY
+    BNE _tv_test        \  not expected to fall through
+._tv_match
+    \  Here we have matched the whole of the name in the symbol table,
+    \  but we must check to make sure we also have the whole of the name
+    \  in the search buffer
+    DEY                 \  back up one character
+    LDA (var_ptr), Y    \  last character of matched name
+    INY                 \  forward again to character after name
+    CMP #40             \  opening (
+    BNE _tv_not_array
+    
+    \  THIS IS AN ARRAY VARIABLE.
+    \  ASSUME THAT THE ( IS THE LAST CHARACTER OF THE NAME.
+
+    INY                 \  skip past CR to value
+    BNE _tv_match1      \  not expecting to fall through
+    
+._tv_not_array
+    LDA (str_ptr), Y    \  character in search buffer after match
+    INY                 \  skip past CR to value
+    CMP #37             \  % sign
+    BEQ _tv_too_short   \  % is part of name
+    CMP #48             \  0
+    BCC _tv_match1      \  anything before 0 is end of name
+    CMP #58             \  colon (after 9)
+    BCC _tv_too_short   \  anything else before colon is part of name
+    CMP #64             \  @
+    BCC _tv_match1      \  anything else before @ is end of name
+    CMP #123            \  } (after z)
+    BCC _tv_too_short   \  anything before } is part of name
+._tv_match1
+    LDX #var_ptr
+    JSR adv_ptr_X       \  now var_ptr holds address of value
+    DEY                 \  now points to character after var.name
+    \\\\JSR osnewl          \  start a new line
+    CLC                 \  C=0 => match
+    RTS
+._tv_no_match
+    LDA (var_ptr), Y
+    CMP #32
+    BCC _tv_end_of_name
+    INY
+    BNE _tv_no_match    \  not expected to fall through
+._tv_end_of_name
+    INY                 \  skip the CR
+._tv_too_short
+    INY                 \  skip the value
+    INY                 \  ..... both bytes
+    LDX #var_ptr
+    JSR adv_ptr_X
+    JMP _tv_new_name
+._tv_end_of_vars        \  now var_ptr points to BRK after symbol table
+    \\\\JSR osnewl          \  start a new line
+    SEC                 \  C=1 => no match
+._tv_done
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  CREATE RECORD IN THE SYMBOL TABLE FOR A NEW VARIABLE
+\
+\  NAME OF VARIABLE TO BE CREATED IS AT str_ptr.
+\  var_ptr MUST POINT TO END OF SYMBOL TABLE.
+\  EXPECTS Y=0
+\  ALL THIS WILL BE TRUE AFTER A FRUITLESS VARIABLE SEARCH.
+\  ON EXIT, NEW VARIABLE EXISTS IN SYMBOL TABLE, INITIALISED WITH 0
+\           SYMBOL TABLE HAS A NEW &00 MARKER AT END
+\           var_ptr CONTAINS LOCATION OF NEW VARIABLE
+
+.create_var
+    LDA (str_ptr), Y
+    CMP #37             \  % sign
+    BEQ _cv_copy_name   \  % is part of name
+    CMP #48             \  0
+    BCC _cv_end_of_name \  anything before 0 is end of name
+    CMP #58             \  colon (after 9)
+    BCC _cv_copy_name   \  anything else before colon is part of name
+    CMP #64             \  @ sign
+    BCC _cv_end_of_name \  anything else before @ is end of name
+    CMP #123            \  }
+    BCC _cv_copy_name   \  anything before { is part of name
+._cv_end_of_name
+    LDA #&0D            \  CR = end-of-name marker
+    STA (var_ptr), Y
+    INY                 \  now Y points where value belongs
+    LDX #var_ptr
+    JSR adv_ptr_X       \  now var_ptr => location of new variable
+    LDA #0              \  temporary value
+    TAY                 \  reset offset for updated pointer
+    STA (var_ptr), Y    \  low byte
+    INY
+    STA (var_ptr), Y    \  high byte
+    INY
+    STA (var_ptr), Y    \  &00 marks end of symbol table
+    RTS
+._cv_copy_name
+    STA (var_ptr), Y
+    INY
+    BNE create_var      \  not expected to fall through
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MATCH A SINGLE-ENDED OPERATOR  (WHICH ALL HAVE SAME PRIORITY)
+\  EXPRESSION TO BE MATCHED IS POINTED TO BY str_ptr
+\  ON EXIT, C=0 => NO MATCH
+\           C=1 => MATCH; A = OPCODE
+
+\  As long as the whole of the table we are searching fits into one page,
+\  we don't need to use a zero-page pointer.
+
+.match_se_oper
+    LDX #0              \  X is pointer into dictionary
+._seo_new_oper
+    LDY #0              \  Y is pointer into expression
+    LDA s_e_opers, X
+    BEQ _seo_end_of_list
+._seo_test
+
+    \  If we see a value < 32 in the operators table, this is the
+    \  priority and means we have matched the whole operator.
+    \  The byte following the priority is the opcode.
+
+    LDA s_e_opers, X
+    CMP #32             \  priority is always < &20
+    BCC _seo_match      \  we have matched whole operator
+    CMP (str_ptr), Y
+    BNE _seo_no_match
+    INX                 \  next character in operator list
+    INY                 \  next character in expression
+    BNE _seo_test       \  not expected to fall through
+._seo_match
+    LDA s_e_opers+1, X  \  opcode
+    CLC                 \  C=0 => match
+    RTS
+    
+    \  If the character in the expression did not match the one in the
+    \  operators table, we need to skip to the next operator; there is
+    \  always a byte < 32 followed by another byte, before it.
+    
+._seo_no_match
+    LDA s_e_opers, X
+    CMP #32
+    BCC _seo_del
+    INX
+    BNE _seo_no_match   \  not expected to fall through
+._seo_del
+    INX                 \  skip delimiter
+    INX                 \  skip opcode
+    BNE _seo_new_oper
+._seo_end_of_list
+    SEC                 \  C=1 => no match
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  SKIP SPACES
+\
+\  ADVANCE TO THE NEXT NON-SPACE CHARACTER AND RESET Y
+\  ON EXIT, C=1 => ENCOUNTERED END OF LINE
+\           C=0 => MORE TO PARSE
+
+.skip_space
+    LDA (str_ptr), Y
+    CMP #13
+    BEQ _skip_is_cr
+    CMP #33             \  !
+    BCS _skip_not_space \  finish if not a space
+    INY
+    BNE skip_space
+._skip_not_space
+    PHA                 \  stash A .....
+    LDX #str_ptr        \  ..... because it will get trashed
+    JSR adv_ptr_X
+    PLA                 \  retrieve character
+    LDY #0              \  reset Y to parse next item
+    CLC                 \  C=0 => more to parse
+    RTS
+._skip_is_cr
+    SEC                 \  C=1 => reached end of line
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  PARSE A NUMERIC CONSTANT
+\  & INDICATES HEX
+\  % INDICATES DECIMAL  (THIS IS AN EXTENSION)
+\  ANYTHING ELSE IS DECIMAL
+\  ON EXIT, THE NUMBER IS IN W REGISTER
+
+.parse_num
+    LDA (str_ptr), Y
+    INY					\  pre-emptively move to digit after
+    CMP #37				\  % sign
+    BEQ parse_bin		
+    CMP #38				\  & sign
+    BEQ parse_hex
+    DEY					\  no prefix => base 10
+    LDA #10             \  prepare to multiply by 10
+    JSR set_multiplicand
+    JSR zero_W
+._pdn_next_digit
+    LDA (str_ptr), Y
+    CMP #48				\  0
+    BCC _pdn_not_digit
+    CMP #58				\  colon (after 9)
+    BCS _pdn_not_digit
+    AND #&0F
+    PHA					\  save digit
+    JSR mult16			\  shift number-so-far left
+    PLA                 \  retrieve digit
+    JSR add_W_A         \  add it to number-so-far
+	INY                 \  next digit
+	BNE _pdn_next_digit	\  not expected to fall through
+._pdn_not_digit
+    RTS
+
+\  PARSE A HEX CONSTANT &xxxx
+\  THE CHARACTERS colon ; : < = > ? @ ARE TREATED AS 3-9
+\  PROBABLY NOT VERY SERIOUS
+
+.parse_hex
+    JSR zero_W
+._phn_next_digit
+    LDA (str_ptr), Y
+    CMP #48				\  0
+    BCC _pdn_not_digit
+    CMP #71				\  G (after F)
+    BCS _pdn_not_digit
+    CMP #58
+    BCC _phn_not_af
+    SBC #7				\  we know here, C is set
+._phn_not_af
+    AND #&0F
+    PHA                 \  remember digit for later
+    LDX #4              \  shift W left 4 places = 1 hex digit
+._phn_asl_W
+    ASL W_reg
+    ROL W_reg+1
+    DEX
+    BNE _phn_asl_W
+    PLA                 \  retrieve digit
+    JSR add_W_A         \  add it to number-so-far
+    INY                 \  next digit
+    BNE _phn_next_digit	\  not expected to fall through
+
+\  PARSE A BINARY CONSTANT %xxxxxxxxxxxxxxxx
+
+.parse_bin
+    JSR zero_W
+._pbn_next_digit
+    LDA (str_ptr), Y
+    LSR A				\  get the units bit into C
+    PHP					\  stash C
+    CMP #24				\  half of 48 or 49
+    BNE _pbn_not_digit
+    PLP					\  retrieve C
+    ROL W_reg           \  shift number-so-far left and add digit
+    ROL W_reg+1
+    INY                 \  next digit
+    BNE _pbn_next_digit	\  not expected to fall through
+._pbn_not_digit
+    PLP					\  this is still on stack
+    RTS
+    
+.add_W_A				\  add A to W register
+    CLC
+.adc_W_A
+    ADC W_reg
+    STA W_reg
+    BCC _aWA_no_carry   \  skip if no carry.  (sum always <= 510.)
+    INC W_reg+1         \  increase the high byte.
+._aWA_no_carry
+    RTS
+    
+.zero_W
+    LDA #0
+    STA W_reg
+    STA W_reg+1
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  GROW THE PROGRAM IN VARIOUS WAYS
+\  ALL CORRECTLY ADVANCE code_ptr AFTERWARDS
+\
+\  APPEND A "USE" INSTRUCTION TO THE PROGRAM
+\  ON ENTRY A = OPCODE
+\           X = POINTER TO OPERAND IN ZP
+
+.grow_use
+    LDY #0
+    STA (code_ptr), Y   \  opcode
+    INY
+    LDA 0, X            \  low byte of operand
+    STA (code_ptr), Y
+    INY
+    LDA 1, X            \  high byte of operand
+    STA (code_ptr), Y
+    INY
+    BNE _grow_adv_cp    \  always branches
+
+\  APPEND A STACK MODE INSTRUCTION TO THE PROGRAM
+\  ON ENTRY A = OPCODE
+
+.grow_not_use
+    AND #&3F
+    LDY #0
+    STA (code_ptr), Y   \  opcode
+    INY
+    BNE _grow_adv_cp    \  always branches
+    
+\  CHANGE A "USE" INSTRUCTION TO A DIFFERENT OPCODE
+\  ON ENTRY A = OPCODE
+
+.alter_use
+    AND #&3F            \  mask out high bits
+    PHA
+    JSR backup_code_ptr \  move code_ptr to previous instruction
+    LDY #0
+    PLA                 \  retrieve opcode ...
+    ORA (code_ptr), Y   \  ... alter it ...
+    STA (code_ptr), Y   \  ... and store altered opcode
+    LDY #3
+._grow_adv_cp
+    LDX #code_ptr
+    JMP adv_ptr_X       \  move code_ptr on
+
+\  EITHER GROW THE PROGRAM WITH A STACK MODE INSTRUCTION, OR ALTER THE
+\  LAST INSTRUCTION IN SITU IF IT IS "USE"
+
+.grow_or_alter
+    JSR pull_op_stack
+.grow_or_alter1
+    BIT parse_st        \  see if last instruction is USE
+    BVS _goa_alter
+    JSR grow_not_use    \  grow the program
+    JMP _goa_grown
+._goa_alter
+    JSR alter_use       \  alter USE in place
+._goa_grown
+    LDA parse_st
+    AND #&3F            \  clear "expect oper" and "last was use"
+    STA parse_st
+._goa_done
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  BACK UP THE CODE POINTER BY 3 BYTES
+
+.backup_code_ptr
+    SEC
+    LDA code_ptr
+    SBC #3
+    STA code_ptr
+    BCS _bk_cp1
+    DEC code_ptr+1
+._bk_cp1
+    RTS
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  PUSH AN OPERATION ON THE OPERATION STACK
+\  ON ENTRY, A = OPCODE
+\            X = PRIORITY
+
+.push_op_stack
+    LDY oper_sp
+    STA oper_stack, Y   \  A => opcode
+    DEY
+    TXA                 \  X => priority
+    STA oper_stack, Y
+    DEY
+    STY oper_sp         \  update stack ptr
+    INC parse_st
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  PULL AN OPERATION FROM THE OPERATION STACK
+\  ON EXIT, A = OPCODE
+\           X = PRIORITY
+
+.pull_op_stack
+    LDY oper_sp
+    INY
+    LDA oper_stack, Y   \  priority ...
+    TAX                 \  ... gets returned in X
+    INY
+    LDA oper_stack, Y   \  opcode
+    STY oper_sp         \  update stack ptr
+    DEC parse_st
+    RTS
+    
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  MULTIPLY AND DIVIDE
+
+.mult16
+.real_mult16
+.oper_MUL
+    LDA #0
+    STA product+3
+    STA product+2
+.mult16_preload
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    \  Begin by shifting the multiplier right so its lowest bit is already
+    \  in the carry flag.
+    LDY #17             \  one more than we need
+    BNE _mult16_3       \  always branches; A = 0
+._mult16_1
+    BCC _mult16_2
+    \  Add the multiplicand to the high word of the product
+    CLC
+    LDA product+2
+    ADC multiplicand
+    STA product+2
+    LDA product+3
+    ADC multiplicand+1
+    STA product+3
+    \  Shift the product right
+._mult16_2
+    ROR product+3
+    ROR product+2
+._mult16_3
+    ROR product+1
+    ROR product
+    \  See if we need to go around again
+    DEY
+    BNE _mult16_1
+    
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  This is the same bit of code with 2 different names
+
+.set_divisor
+.set_multiplicand
+    STA multiplicand
+    LDA #0
+    STA multiplicand+1
+    RTS
+    
+\  DIVIDE ONE 16-BIT NUMBER BY ANOTHER
+    
+.real_div16
+.divide_no_rem
+    LDA #0
+    STA remainder
+    STA remainder+1
+.divide
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    JSR div_core
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+
+\  SIGNED DIVISION.  THIS WORKS BY KEEPING THE DIVIDEND AND DIVISOR POSITIVE
+\  AND USING neg_flag TO INDICATE WHAT IF ANYTHING NEEDS TO BE MADE NEGATIVE
+\  AFTER THE OPERATION IS COMPLETE.
+
+.oper_DIV
+.signed_divide
+    LDA #0
+    STA remainder
+    STA remainder+1
+.signed_div_ext
+    TXA                 \  save X and Y on 6502 stack
+    PHA
+    TYA
+    PHA
+    LDA #0
+    STA neg_flag
+    LDA dividend+1
+    BPL positivify_divr
+    LDA #&C0            \  set bits 7 and 6
+    STA neg_flag
+    LDX #dividend       \  twos-complement it
+    JSR twc16_zpX
+.positivify_divr
+    LDA divisor+1
+    BPL _pos_dvr1
+    LDA neg_flag
+    EOR #&80
+    STA neg_flag
+    LDX #divisor        \  twos-complement it
+    JSR twc16_zpX
+._pos_dvr1
+    JSR div_core
+    BIT neg_flag
+    BPL _sd_quot_pos
+    LDX #quotient
+    JSR twc16_zpX       \  negativify the quotient
+._sd_quot_pos
+    BIT neg_flag
+    BVC _sd_rem_pos
+    LDX #remainder
+    JSR twc16_zpX       \  negativify the remainder
+._sd_rem_pos
+    PLA                 \  retrieve Y and X from 6502 stack
+    TAY
+    PLA
+    TAX
+    RTS
+    
+\  CORE DIVISION ROUTINE.  THIS TRASHES REGISTERS .....
+
+.div_core
+    LDY#17              \  one more than we need
+    BNE _divide_3       \  do an extra left shift on just bottom bits
+._divide_1
+    ROL dividend+2
+    ROL dividend+3
+._divide_2
+    SEC
+    LDA dividend+2
+    SBC divisor
+    TAX \ stash low byte in X in case we need it
+    LDA dividend+3
+    SBC divisor+1
+    BCC _divide_3
+    \ update dividend if we had room to subtract
+    STX dividend+2
+    STA dividend+3
+._divide_3
+    ROL dividend      \ C shifts into divd
+    ROL dividend+1
+    DEY
+    BNE _divide_1
+    \  dividend, dividend+1 now contain quotient
+    \  dividend+2, dividend+3 contain remainder
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+
+.twc16_zpX
+    SEC                 \  so as to add 1 when we flip the bits
+    LDA #0
+    SBC 0,X
+    STA 0,X
+    LDA #0
+    SBC 1,X
+    STA 1,X
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  ADVANCE POINTER AT [X] IN ZERO PAGE BY Y
+
+.adv_ptr_X
+    TYA
+    CLC
+    ADC 0,X
+    STA 0,X
+    BCC _ap_1
+    INC 1,X
+._ap_1
+    RTS
+
+\  DISPLAY INLINE TEXT
+\
+\  NB. THIS STOMPS ON THE VM X REGISTER!
+
+.say
+    PLA
+    STA &72
+    PLA
+    STA &73
+    TYA
+    PHA
+    LDY #1
+._say1
+    LDA (&72), Y
+    BEQ _say2
+    JSR osasci
+    CMP #32
+    BCC _say2
+    INY
+    BNE _say1
+._say2
+    CLC
+    TYA
+    ADC &72
+    STA &72
+    PLA
+    TAY
+    LDA &73
+    ADC #0
+    PHA
+    LDA &72
+    PHA
+    RTS
+
+
+\\\\.disp_var_ptr
+\\\\    PHA
+\\\\    LDA var_ptr+1
+\\\\    JSR disp_hex
+\\\\    LDA var_ptr
+\\\\    JSR disp_hex
+\\\\    LDA #32
+\\\\    JSR osasci
+\\\\    PLA
+\\\\    RTS
+\\\\
+
+\  DISPLAY CONTENTS OF W REGISTER AS A HEX NUMBER
+
+.disp_W
+    LDX #W_reg          \  and fall through
+
+\  DISPLAY 16-BIT HEX NUMBER AT X,X+1 IN ZERO PAGE
+
+.disp_16bit_X
+    LDA 1, X
+    JSR disp_hex
+    LDA 0, X            \  and fall through
+
+\  DISPLAY HEX NUMBER IN ACCULULATOR
+
+.disp_hex
+    PHA
+    TXA
+    PHA
+    TSX
+    LDA &102,X          \  get back A stored earlier
+    PHA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    JSR _dh_digit
+    PLA
+    AND #&0F
+    JSR _dh_digit
+    PLA
+    TAX
+    PLA
+    RTS
+    
+._dh_digit
+    CLC
+    ADC #&30
+    CMP #&3A
+    BCC _dh_09
+    ADC #6              \  knowing C=1 here
+._dh_09
+    JMP osasci
+
+    
+._code_done
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  OPERATOR TABLE
+\
+\  SINGLE-ENDED OPERATORS
+\
+
+\  OPERATOR       DELIMITER   J-CODE OPCODE
+.s_e_opers
+    EQUS "("    : EQUB &0D  : EQUB opc_OPB
+\  Opening bracket is treated as though it were a single-ended operator.
+\  This is sensible, because it always occurs at the start of a value.
+    EQUS "+"    : EQUB &0D  : EQUB opc_NCH
+    EQUS "-"    : EQUB &0D  : EQUB opc_TWC
+    EQUB &AC    : EQUB &0D  : EQUB opc_ONC
+    EQUB &B4    : EQUB &0D  : EQUB opc_SGN
+    EQUB &94    : EQUB &0D  : EQUB opc_ABS
+    EQUS "!"    : EQUB &0D  : EQUB opc_RDW
+    EQUS "?"    : EQUB &0D  : EQUB opc_RDB
+    BRK
+
+\  DOUBLE-ENDED OPERATORS
+\  LONGER OPERATORS EG <= MUST PRECEDE SHORTER ONES EG < !
+
+\   OPERATOR      PRIORITY    J-CODE OPCODE
+
+.d_e_opers      \ priority  \ J-code opcode
+    EQUS ")"    : EQUB &0E  : EQUB opc_CLB
+\  Closing bracket is treated as though it were a double-ended operator.
+\  It always occurs after a value.
+    EQUS "+"    : EQUB &04  : EQUB &04
+    EQUS "-"    : EQUB &04  : EQUB &05
+    EQUS "**"   : EQUB &06  : EQUB &09      \  alias for ^
+    EQUS "*"    : EQUB &05  : EQUB &06
+    EQUS "/"    : EQUB &05  : EQUB &07
+    EQUB &81    : EQUB &05  : EQUB &07      \  DIV
+    EQUB &83    : EQUB &05  : EQUB &08      \  MOD
+    EQUB &82    : EQUB &02  : EQUB &01      \  EOR
+    EQUB &84    : EQUB &02  : EQUB &02      \  OR
+    EQUB &80    : EQUB &03  : EQUB &03      \  AND
+    EQUS "<="   : EQUB &08  : EQUB &0C
+    EQUS "<>"   : EQUB &08  : EQUB &0B
+    EQUS ">="   : EQUB &08  : EQUB &0D
+    EQUS "<"    : EQUB &08  : EQUB &0F
+    EQUS "="    : EQUB &08  : EQUB &0A
+    EQUS ">"    : EQUB &08  : EQUB &0E
+    EQUS "^"    : EQUB &06  : EQUB &09
+    BRK
+
+ALIGN &100
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
+\  SYMBOL TABLE
+\
+\  GENERAL STRUCTURE IS:
+\    VARIABLE NAME
+\    &0D AS END-OF-NAME MARKER
+\    2 BYTES FOR VALUE
+\    VARIABLE NAME
+\    &0D AS END-OF-NAME MARKER
+\    2 BYTES FOR VALUE
+\    ...
+\    &00 AS END-OF-SYMBOL-TABLE MARKER
+
+.symbol_table
+    EQUS "height"       \  variable name
+    EQUB 13             \  CR to terminate
+    EQUW 170            \  2-byte value
+    
+    EQUS "weight"
+    EQUB 13
+    EQUW 70
+    
+    EQUS "name"
+    EQUB 13
+    EQUW &7B00
+    
+    EQUS "weigh"
+    EQUB 13
+    EQUW &676B
+    
+    EQUS "CAT"
+    EQUB 13
+    EQUW -100
+    
+    EQUS "CAR"
+    EQUB 13
+    EQUW 250
+    
+    EQUS "CART"
+    EQUB 13
+    EQUW 200
+    
+    EQUS "HORSE"
+    EQUB 13
+    EQUW 300
+    
+    EQUS "CATHERINE"
+    EQUB 13
+    EQUW -112
+    
+    BRK                 \  end of symbol table
+
+._code_end
+
+SAVE "M.PARSE3", _code_begin, _code_end, _code_done
