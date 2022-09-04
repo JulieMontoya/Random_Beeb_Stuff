@@ -25,14 +25,20 @@ opc_DIP = &14
 opc_PUT = &15
 opc_PAF = &16
 
-opc_NCH = &17
-opc_TWC = &18
-opc_ONC = &19
-opc_SGN = &1A
-opc_ABS = &1B
-opc_RDW = &1C
-opc_RDB = &1D
+opc_ARG = &17
+opc_ARP = &18
 
+opc_NCH = &19
+opc_TWC = &1A
+opc_ONC = &1B
+opc_SGN = &1C
+opc_ABS = &1D
+opc_RDW = &1E
+opc_RDB = &1F
 
+opc_ARR = &3C           \  array access (pseudo-op)
 opc_OPB = &3D           \  open bracket (pseudo-op)
 opc_CLB = &3E           \  close bracket (pseudo-op)
+
+adr_IMM = &80           \  immediate mode   MNE &0000
+adr_IND = &C0           \  indirect mode    MNE (&0000)
