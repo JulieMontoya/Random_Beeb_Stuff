@@ -1,44 +1,44 @@
 \
 
-##USE
+## USE
 
-##EOR
-##ORI
-##AND
-##ADD
-##SUB
-##MUL
-##DIV
-##MOD
-##POW
-##TEQ
-##TNE
-##TLT
-##TGE
-##TGT
-##TLE
-##CMP
-##BCP
-##BSU
-##MUF
-##DIP
-##PUT
-##PAF
+## EOR
+## ORI
+## AND
+## ADD
+## SUB
+## MUL
+## DIV
+## MOD
+## POW
+## TEQ
+## TNE
+## TLT
+## TGE
+## TGT
+## TLE
+## CMP
+## BCP
+## BSU
+## MUF
+## DIP
+## PUT
+## PAF
 
-##ARG
-##ARP
+## ARG
+## ARP
 
-##NCH
-##TWC
-##ONC
-##SGN
-##ABS
-##RDW
-##RDB
+## NCH
+## TWC
+## ONC
+## SGN
+## ABS
+## RDW
+## RDB
 
-##ARR
-##OPB
-##CLB
+## ARR
+## OPB
+## CLB
 
-##IMM
-##IND
+## IMM
+## IND
