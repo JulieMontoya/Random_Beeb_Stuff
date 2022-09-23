@@ -44,13 +44,16 @@ var_ptr   = &76
 \  No need to track end of symbol table: we only ever need to grow it after
 \  a failed search, whereupon we will already have found it the slow way.
 
-rnd_seed = &0D          \  BBC BASIC uses this as RND seed
+rnd_seed  = &0D         \  BBC BASIC uses this as RND seed
+
+CR        = &0D
 
 oper_stack = &7000
 
 osasci = &FFE3
 osnewl = &FFE7
 oswrch = &FFEE
+
 osword = &FFF1
 
 INCLUDE "jcode_opcodes.6502"
@@ -86,6 +89,9 @@ ORG &7100
 .ext_parse_item
     JMP parse_item
 
+.ext_set_var
+    JMP set_var
+
 \\\\.ext_parse_hex
 \\\\    JMP parse_hex
     
@@ -108,9 +114,11 @@ ORG &7100
     LDY #0
     JSR parse_item
     BCC _parse_expr1    \  keep going till done
+._safe_return
     RTS
     
 .parse_item
+    \JSR tell_opstk
     BIT parse_st        \  parser state
     BMI _pi_de_op       \  Z=1 => expecting operator
     JMP parse_value     \  Z=0 => expecting value
@@ -124,7 +132,7 @@ ORG &7100
 \    - A SINGLE-ENDED OPERATOR WITH A VALUE AFTER IT
 \    - A NUMERIC CONSTANT
 \    - AN EXISTING VARIABLE
-\      (WE'LL DEAL WITH ARRAYS LATER)
+\    - AN ARRAY ACCESS (WHICH WILL REQUIRE PARSING >=1 SUB-EXPRESSIONS!)
 
 .parse_value
     JSR skip_space      \  skip spaces
@@ -151,7 +159,7 @@ ORG &7100
 
     \  IF SO WE NEED TO;
     \  PUSH THE PARSER STATE ONTO THE 6502 STACK
-    \  PARSE AN ENTIRE EXPRESSION, LEAVING A SUBSCRIPT ON THE STACK
+    \  PARSE AN ENTIRE EXPRESSION, LEAVING A SUBSCRIPT ON THE VM STACK
     \  AND RESTORE THE PARSER STATE
     \  DECREASE THE NUMBER OF SUBSCRIPTS REMAINING
     \  IF ANY SUBSCRIPTS REMAIN, SKIP COMMA AND EXPECT A VALUE
@@ -182,15 +190,15 @@ ORG &7100
     TXA
     STA oper_stack+2,Y
     
-    JSR say
-    EQUS "Now want "
-    BRK
+\    JSR say
+\    EQUS "Now want "
+\    BRK
     LDY oper_sp
     LDA oper_stack+2,Y
-    JSR disp_hex
-    PHA
-    JSR osnewl
-    PLA
+\    JSR disp_hex
+\    PHA
+\    JSR osnewl
+\    PLA
     BNE _pv_aa_more
 ._pv_aa_done
     LDA parse_st
@@ -267,15 +275,21 @@ ORG &7100
     JMP _tell_const
 
 ._pv_is_var
-    DEY                 \  Back up one character
-    LDA (basic_ptr), Y    \  Get last char of variable name
-    PHA
-    INY
+\    DEY                 \  Back up one character
+\    LDA (basic_ptr), Y    \  Get last char of variable name
+\    PHA
+\    INY
+\    LDX #basic_ptr      \  Move pointer past variable name
+\    JSR adv_ptr_X
+\    PLA
+\    CMP #40             \  Opening (
+\    BNE _pv_not_array
+
+    PHP                 \  save V flag
     LDX #basic_ptr      \  Move pointer past variable name
     JSR adv_ptr_X
-    PLA
-    CMP #40             \  Opening (
-    BNE _pv_not_array
+    PLP
+    BVC _pv_not_array   \  Skip if normal variable
         
     \  PUSH THE BASE ADDRESS OF THE ARRAY ONTO THE OPERATION STACK
     \  FOLLOWED BY AN "ARRAY READ" INSTRUCTION (PRIORITY = &0C)
@@ -364,6 +378,42 @@ ORG &7100
     CLC                 \  C=0 => more to parse
     RTS
 
+\.tell_opstk
+\    PHP
+\    PHA
+\    TYA
+\    PHA
+\    TXA
+\    PHA
+\
+\    LDA #130
+\    JSR oswrch
+\    LDA parse_st
+\    JSR disp_hex
+\    LDA #132
+\    JSR oswrch
+\    LDA oper_sp
+\    JSR disp_hex
+\    
+\    LDX #&F5
+\    
+\._tos_1
+\    LDA #131
+\    JSR oswrch
+\    LDA oper_stack, X
+\    JSR disp_hex
+\    INX
+\    BNE _tos_1
+\    JSR osnewl
+\    
+\    PLA
+\    TAX
+\    PLA
+\    TAY
+\    PLA
+\    PLP
+\    RTS
+    
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 \  PARSE STATE
@@ -487,6 +537,14 @@ ORG &7100
     JMP _tell_end_aa
         
 ._deo_not_clb
+    LDX temp_pri
+    CPX #&1F            \  dummy priority of legitimate delimiter
+    BNE _deo_not_delim
+    JSR _tell_delim
+    JSR backup_basic_ptr\  Back up to the delimiter
+    JMP _deo_is_end
+
+._deo_not_delim
 
     \  IF THE OPERATION STACK IS CLEAR, OR THE OPERATION ON THE TOP OF
     \  THE STACK HAS A STRICTLY LOWER PRIORITY THAN THE NEW ONE, THEN
@@ -552,6 +610,28 @@ ORG &7100
     JSR disp_hex
     JSR osnewl
     CLC
+    RTS
+    
+._tell_delim
+    STA X_reg
+    TYA
+    PHA
+    TXA
+    PHA
+    
+    JSR say
+    EQUS "Delimiter "
+    BRK
+    
+    PLA
+    TAX
+    PLA
+    TAY
+    LDA temp_opc
+    JSR osasci
+    LDA #&20
+    JSR osasci
+    LDA X_reg
     RTS
 
 ._tell_clb
@@ -633,6 +713,109 @@ ORG &7100
 
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
+\  SET A VARIABLE IN THE SYMBOL TABLE
+\  CREATE IT, IF IT DOES NOT EXIST
+
+.set_var
+    \  Set up the parse state
+
+    LDA #%00000000
+    \     |||`-.-'
+    \     |||  |
+    \     |||  stack depth = 0
+    \     ||`---- not a byte
+    \     |`----- not memory access
+    \     `------ not array access
+    STA parse_st        \  initialise parser state
+
+    JSR skip_space
+    JSR test_var
+    BCC _sv_exists
+._sv_new
+    PHP
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+    
+    JSR say
+    EQUS "New variable"
+    EQUB CR
+
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+    RTS
+
+._sv_exists
+    PHP
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+
+    BVS _sv_array
+    JSR say
+    EQUS "Existing variable"
+    EQUB CR
+    JMP _sv_ex_1
+._sv_array
+    JSR say
+    EQUS "Array variable"
+    EQUB CR
+
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+
+    \  Put the array access on the operation stack
+    LDY #0              \  Point to first byte of array structure ...
+
+    \  Get the actual base address of the array
+    
+    LDA var_ptr
+    STA W_reg
+    LDA var_ptr+1
+    STA W_reg+1
+    JSR indir_W         \  now W points to array base address
+    LDY #0
+    LDA (W_reg), Y      \  ... which holds number of dimensions
+    PHA                 \  Stash it
+    LDA W_reg           \  A => low byte
+    LDX W_reg+1         \  X => high byte
+    JSR push_op_stack
+    PLA                 \  Retrieve number of subscripts
+    LDX #&0C            \  Priority &0C => array access
+    JSR push_op_stack
+    
+    LDA parse_st
+    AND #&1F            \  Stack depth
+    ORA #&80            \  Array access
+    STA parse_st
+
+    SEC                 \  always indicate a fault for now
+    RTS
+    
+._sv_ex_1
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+    
+    RTS
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\
 \  TRY TO MATCH A VARIABLE NAME AT basic_ptr AGAINST A NAME IN THE SYMBOL
 \  TABLE.
 \  ON EXIT, C=1 => NO MATCH; var_ptr => END OF SYMBOL TABLE
@@ -697,7 +880,10 @@ ORG &7100
     \  ASSUME THAT THE ( IS THE LAST CHARACTER OF THE NAME.
 
     INY                 \  skip past CR to value
-    BNE _tv_match1      \  not expecting to fall through
+    \\\\BNE _tv_match1      \  not expecting to fall through
+    JSR _tv_match1
+    BIT _safe_return     \  this will set V
+    RTS
     
 ._tv_not_array
     LDA (basic_ptr), Y    \  character in search buffer after match
@@ -717,6 +903,7 @@ ORG &7100
     JSR adv_ptr_X       \  now var_ptr holds address of value
     DEY                 \  now points to character after var.name
     \\\\JSR osnewl          \  start a new line
+    CLV                 \  V=0 => not an array
     CLC                 \  C=0 => match
     RTS
 ._tv_no_match
@@ -1422,30 +1609,10 @@ ORG &7100
     EQUS "="    : EQUB &08  : EQUB opc_TEQ
     EQUS ">"    : EQUB &08  : EQUB opc_TGT
     EQUS "^"    : EQUB &06  : EQUB opc_POW
+\  Delimiters also occur after a value.
+    EQUS ","    : EQUB &1F  : EQUS ","
+    EQUS ";"    : EQUB &1F  : EQUS ";"
     BRK
-
-\.d_e_opers      \ priority  \ J-code opcode
-\    EQUS ")"    : EQUB &0E  : EQUB opc_CLB
-\\  Closing bracket is treated as though it were a double-ended operator.
-\\  It always occurs after a value.
-\    EQUS "+"    : EQUB &04  : EQUB &04
-\    EQUS "-"    : EQUB &04  : EQUB &05
-\    EQUS "**"   : EQUB &06  : EQUB &09      \  alias for ^
-\    EQUS "*"    : EQUB &05  : EQUB &06
-\    EQUS "/"    : EQUB &05  : EQUB &07
-\    EQUB &81    : EQUB &05  : EQUB &07      \  DIV
-\    EQUB &83    : EQUB &05  : EQUB &08      \  MOD
-\    EQUB &82    : EQUB &02  : EQUB &01      \  EOR
-\    EQUB &84    : EQUB &02  : EQUB &02      \  OR
-\    EQUB &80    : EQUB &03  : EQUB &03      \  AND
-\    EQUS "<="   : EQUB &08  : EQUB &0C
-\    EQUS "<>"   : EQUB &08  : EQUB &0B
-\    EQUS ">="   : EQUB &08  : EQUB &0D
-\    EQUS "<"    : EQUB &08  : EQUB &0F
-\    EQUS "="    : EQUB &08  : EQUB &0A
-\    EQUS ">"    : EQUB &08  : EQUB &0E
-\    EQUS "^"    : EQUB &06  : EQUB &09
-\    BRK
     
 ALIGN &100
 
@@ -1510,7 +1677,7 @@ ALIGN &100
     
     BRK                 \  end of symbol table
 
-    ALIGN &100
+    ALIGN &80
     
 .array_S
     EQUB 1              \  byte 0    => number of dimensions
