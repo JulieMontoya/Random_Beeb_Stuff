@@ -1,0 +1,200 @@
+\  DEBUGGING ROUTINES FOR expr04.6502
+\  
+\  INCLUDE THIS FILE TO BUILD DEBUGGING ROUTINES.
+\
+\  OTHERWISE INCLUDE DUMMY DEBUG FILE INSTEAD.
+\
+
+ORG &6C00
+
+._debug_begin
+
+ORG &6D00
+
+.debug_aaip
+    JSR say
+    EQUS "Array access in progress; want "
+    BRK
+    LDY oper_sp
+    LDA oper_stack+2,Y
+    JSR disp_hex
+    JMP osnewl
+
+.debug_arracc
+    JSR say
+    EQUS "Array access"
+    EQUB &0D
+    RTS
+    
+.debug_const
+    JSR say
+    EQUS "Numeric constant &"
+    BRK
+    JSR disp_W
+    JMP osnewl
+
+.debug_var
+    JSR say
+    EQUS "Variable at &"
+    BRK
+    LDX #var_ptr
+    JSR disp_16bit_X
+    JMP osnewl
+
+.debug_end_aa
+    JSR say
+    EQUS "End of array access &"
+    BRK
+    LDA W_reg+1
+    JSR disp_hex
+    LDA W_reg
+    JSR disp_hex
+    JMP osnewl
+
+.debug_clb
+    JSR say
+    EQUS "Closing bracket "
+    BRK
+    LDA temp_opc
+    JSR disp_hex
+    JSR say
+    EQUS " priority "
+    BRK
+    LDA temp_pri
+    JSR disp_hex
+    JMP osnewl
+
+.debug_deo
+    JSR say
+    EQUS "Double ended operation "
+    BRK
+    LDA temp_opc
+    JSR disp_hex
+    JSR say
+    EQUS " priority "
+    BRK
+    LDA temp_pri
+    JSR disp_hex
+    JMP osnewl
+
+.debug_delim
+    JSR safe_say
+    EQUS "Delimiter "
+    BRK
+    LDA temp_opc
+    JSR osasci
+    LDA #&20
+    JSR osasci
+    LDA X_reg
+    RTS
+
+.debug_seo
+    JSR say
+    EQUS "Single ended operation "
+    BRK
+    PHA
+    JSR disp_hex
+    JSR osnewl
+    PLA
+    RTS
+    
+.debug_new_var
+    JSR say
+    EQUS "New variable at &"
+    BRK
+    LDX #var_ptr
+    JSR disp_16bit_X
+    JMP osnewl
+
+.debug_sv_ex_var
+    JSR say
+    EQUS "Existing variable"
+    EQUB CR
+    RTS
+
+.debug_sv_array
+    JSR say
+    EQUS "Array variable"
+    EQUB CR
+    RTS
+
+.debug_excl
+    JSR say
+    EQUS "! no offset"
+    EQUB CR
+    RTS
+    
+.debug_ques
+    JSR say
+    EQUS "? no offset"
+    EQUB CR
+    RTS
+
+.debug_oexcl
+    JSR say
+    EQUS "! offset"
+    EQUB CR
+    RTS
+    
+.debug_oques
+    JSR say
+    EQUS "? offset"
+    EQUB CR
+    RTS
+
+.debug_equals
+    JSR say
+    EQUS "= sign!"
+    EQUB CR
+    RTS
+        
+.debug_eoe
+    JSR say
+    EQUS "End of expr. Next is "
+    BRK
+    LDY #0
+    LDA (basic_ptr), Y
+    JSR osasci
+    JMP osnewl
+    
+.debug_opstk
+    PHP
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+
+    LDA #130            \  Green for parse state
+    JSR oswrch
+    LDA parse_st
+    JSR disp_hex
+    LDA #132            \  Blue for opstk pointer
+    JSR oswrch
+    LDA oper_sp
+    JSR disp_hex
+    
+    LDX #&F5
+    
+._db_os_1
+    LDA #131            \  Yellow for operation stack
+    JSR oswrch
+    LDA oper_stack, X
+    JSR disp_hex
+    INX
+    BNE _db_os_1
+    JSR osnewl
+    
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+    RTS
+    
+    \EQUS "This is a ridiculously long string, the purpose of which is to take us all the way to a page boundary and so hit code we have already assembled.  If I have understood BeebAsm properly, this should cause an error for trying to assemble over the top of existing code."
+
+    \RTS
+    
+._debug_end

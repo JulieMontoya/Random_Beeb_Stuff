@@ -101,15 +101,26 @@ ORG &7100
 \\\\.ext_disp_hex
 \\\\    JMP disp_hex
 
+
+
+\  We need to add the ability to stop parsing on encountering an = sign
+\  in case we are parsing something like !a=b
+\
+\  Plan:  Use bit 20 of parse_st
+\  Require parse_st to be set up in advance!
+\  If the operation stack is empty, the stop-on-= bit is set and the
+\  character is an equals sign, we treat this as a delimiter and back
+\  up to parse it next time.
+
 .parse_expr
-    LDA #%00000000
-    \     |||`-.-'
-    \     |||  |
-    \     |||  stack depth = 0
-    \     ||`---- not in brackets
-    \     |`----- last was not use
-    \     `------ expect a value
-    STA parse_st        \  initialise parser state
+    \LDA #%00000000
+    \\     |||`-.-'
+    \\     |||  |
+    \\     |||  stack depth = 0
+    \\     ||`---- not in brackets
+    \\     |`----- last was not use
+    \\     `------ expect a value
+    \STA parse_st        \  initialise parser state
 ._parse_expr1
     LDY #0
     JSR parse_item
@@ -118,7 +129,7 @@ ORG &7100
     RTS
     
 .parse_item
-    \JSR tell_opstk
+    JSR debug_opstk
     BIT parse_st        \  parser state
     BMI _pi_de_op       \  Z=1 => expecting operator
     JMP parse_value     \  Z=0 => expecting value
@@ -138,12 +149,8 @@ ORG &7100
     JSR skip_space      \  skip spaces
     CMP #&0D
     BNE _pv_not_end
-._pv_is_end
-    JSR say
-    EQUS "End of expression"
-    EQUB 13
-    SEC                 \  C=1 => end of expression
-    RTS
+    JMP _deo_is_end
+
 ._pv_not_end
 
     \  SEE IF WE ARE IN THE MIDDLE OF AN ARRAY ACCESS
@@ -166,17 +173,13 @@ ORG &7100
     \  IF ALL SUBSCRIPTS ARE DONE, EXPECT AN OPERATOR
     \  THE CLOSING BRACKET OF THE ARRAY ACCESS WILL TRIGGER NEXT PHASE
 
-    JSR say
-    EQUS "Array access in progress; want "
-    BRK
-    LDY oper_sp
-    LDA oper_stack+2,Y
-    JSR disp_hex
-    JSR osnewl
+    JSR debug_aaip      \  Array access in progress; want 01
     
     LDA parse_st
     AND #&3F            \  Do this now; we will want a value next anyway
     PHA                 \  Save the parser state
+    LDA #0              \  Initialise parser state for new expression
+    STA parse_st
     JSR parse_expr      \  Parse a whole expression
     PLA                 \  Retrieve parser state
     STA parse_st
@@ -189,16 +192,6 @@ ORG &7100
     DEX
     TXA
     STA oper_stack+2,Y
-    
-\    JSR say
-\    EQUS "Now want "
-\    BRK
-    LDY oper_sp
-    LDA oper_stack+2,Y
-\    JSR disp_hex
-\    PHA
-\    JSR osnewl
-\    PLA
     BNE _pv_aa_more
 ._pv_aa_done
     LDA parse_st
@@ -207,9 +200,10 @@ ORG &7100
     CLC
     RTS
 ._pv_aa_more
-    LDY #1
-    LDX #basic_ptr      \  Move pointer past comma
-    JSR adv_ptr_X    
+    INC basic_ptr       \  Move pointer past comma
+    BNE _pc_aa_more1
+    INC basic_ptr+1
+._pc_aa_more1
     CLC                 \  keep on parsing
     RTS
     
@@ -217,6 +211,25 @@ ORG &7100
     \  FIRST TRY FOR A SINGLE-ENDED OPERATION
     JSR match_se_oper
     BCC _pv_is_seo
+    \  NEXT TRY FOR A CLOSING BRACKET
+    LDA (basic_ptr), Y
+    CMP #41             \  closing bracket
+    BNE _pv_not_clb
+    LDA parse_st        \  parser state
+    AND #&1F            \  get just stack length
+    BEQ _pv_clb_err
+    STA parse_st        \  look for a value
+    INC basic_ptr       \  Advance past the closing bracket
+    BNE _pv_clb_1
+    INC basic_ptr+1
+._pv_clb_1
+    JMP _deo_new_clb1   \  continue as though d/e )
+._pv_clb_err
+    JSR say
+    EQUS ") without ( at &"
+    BRK
+    JMP _pv_disp_ptr
+._pv_not_clb
     \  NEXT TRY FOR A NUMERIC CONSTANT
     JSR parse_num
     BCC _pv_is_num
@@ -227,6 +240,7 @@ ORG &7100
     JSR say
     EQUS "Not S/E op, const or var at &"
     BRK
+._pv_disp_ptr
     LDX #basic_ptr
     JSR disp_16bit_X
     JSR osnewl
@@ -235,8 +249,9 @@ ORG &7100
     
 ._pv_is_seo
     PHA
-    LDX #basic_ptr      \  Move pointer past matched operation
-    JSR adv_ptr_X
+    JSR adv_basic_ptr   \  Move pointer past matched operation
+    \LDX #basic_ptr      \  Move pointer past matched operation
+    \JSR adv_ptr_X
     PLA
     
     \  PUSH THE SINGLE-ENDED OPERATION ONTO THE OPERATION STACK
@@ -246,9 +261,10 @@ ORG &7100
     PHA
     CMP #opc_OPB
     BNE _pv_not_opb
-    LDA parse_st
-    ORA #&20            \  set "in brackets" flag
-    STA parse_st
+    \ LDA parse_st
+    \ ORA #&20            \  set "in brackets" flag
+    \ not used for that anymore
+    \ STA parse_st
     LDA #opc_OPB        \  remember what we had earlier
     LDX #&01            \  open bracket has priority &01
 ._pv_not_opb
@@ -257,37 +273,29 @@ ORG &7100
     AND #&3F            \  not expecting a d/e operator, last was not use
     STA parse_st
     PLA
-    JMP _tell_seo
+    JSR debug_seo
+    CLC                 \  C=0 => more to parse
+    RTS
     
 ._pv_is_num
-    LDX #basic_ptr      \  Move pointer past number
-    JSR adv_ptr_X
+    JSR adv_basic_ptr   \  Move pointer past number
     
     \  GROW THE PROGRAM WITH A "USE" OPERATION
 
     LDA #&80            \  USE immediate
     LDX #W_reg          \  operand is in VM W register
-    JSR grow_use
+    JSR grow_any
     
     \  AND SET THE "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
     
     JSR _after_use
-    JMP _tell_const
+    JSR debug_const
+    CLC                 \  C=0 => more to parse
+    RTS
 
 ._pv_is_var
-\    DEY                 \  Back up one character
-\    LDA (basic_ptr), Y    \  Get last char of variable name
-\    PHA
-\    INY
-\    LDX #basic_ptr      \  Move pointer past variable name
-\    JSR adv_ptr_X
-\    PLA
-\    CMP #40             \  Opening (
-\    BNE _pv_not_array
-
     PHP                 \  save V flag
-    LDX #basic_ptr      \  Move pointer past variable name
-    JSR adv_ptr_X
+    JSR adv_basic_ptr   \  Move pointer past variable name
     PLP
     BVC _pv_not_array   \  Skip if normal variable
         
@@ -296,9 +304,7 @@ ORG &7100
     \  WITH THE NUMBER OF SUBSCRIPTS EXPECTED WHERE THE OPCODE WOULD BE
     
     LDY #0              \  Point to first byte of array structure ...
-
-    \  Get the actual base address of the array
-    
+    \  Get the actual base address of the array    
     LDA var_ptr
     STA W_reg
     LDA var_ptr+1
@@ -317,9 +323,7 @@ ORG &7100
     AND #&3F            \  expect value; clear "last was use"
     STA parse_st
 
-    JSR say
-    EQUS "Array access"
-    EQUB &0D
+    JSR debug_arracc
     CLC
     RTS
     
@@ -332,11 +336,13 @@ ORG &7100
 
     LDA #&C0            \  USE (indirect)
     LDX #var_ptr        \  operand is in var_ptr
-    JSR grow_use
+    JSR grow_any
 
     \  AND SET THE "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
     JSR _after_use
-    JMP _tell_var
+    JSR debug_var
+    CLC                 \  C=0 => more to parse
+    RTS
 
 \  AFTER A "USE", SET "LAST WAS USE" AND "EXPECT D/E OP" FLAGS
 
@@ -345,75 +351,7 @@ ORG &7100
     ORA #&C0            \  80 => expect d/e op; 40 => last was use
     STA parse_st
     RTS
-    
-._tell_seo
-    PHA
-    JSR say
-    EQUS "Single ended operation "
-    BRK
-    PLA
-    PHA
-    JSR disp_hex
-    JSR osnewl
-    PLA
-    CLC                 \  C=0 => more to parse
-    RTS
-
-._tell_const
-    JSR say
-    EQUS "Numeric constant &"
-    BRK
-    JSR disp_W
-    JSR osnewl
-    CLC                 \  C=0 => more to parse
-    RTS
-
-._tell_var
-    JSR say
-    EQUS "Variable at &"
-    BRK
-    LDX #var_ptr
-    JSR disp_16bit_X
-    JSR osnewl
-    CLC                 \  C=0 => more to parse
-    RTS
-
-\.tell_opstk
-\    PHP
-\    PHA
-\    TYA
-\    PHA
-\    TXA
-\    PHA
-\
-\    LDA #130
-\    JSR oswrch
-\    LDA parse_st
-\    JSR disp_hex
-\    LDA #132
-\    JSR oswrch
-\    LDA oper_sp
-\    JSR disp_hex
-\    
-\    LDX #&F5
-\    
-\._tos_1
-\    LDA #131
-\    JSR oswrch
-\    LDA oper_stack, X
-\    JSR disp_hex
-\    INX
-\    BNE _tos_1
-\    JSR osnewl
-\    
-\    PLA
-\    TAX
-\    PLA
-\    TAY
-\    PLA
-\    PLP
-\    RTS
-    
+        
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 \  PARSE STATE
@@ -474,8 +412,7 @@ ORG &7100
     \  WE HAD NEVER MOVED IT ON.
         
 ._deo_ok1
-    LDX #basic_ptr      \  Move pointer past matched operation
-    JSR adv_ptr_X       \  (easier just to back it up if we need)
+    JSR adv_basic_ptr   \  Move pointer past matched operation
     
     \  CLOSING BRACKET IS PARSED AS A D/E OPERATOR.
 
@@ -517,33 +454,52 @@ ORG &7100
     
 ._deo_new_clb_opb
     JSR pull_op_stack   \  Discard the (
-    LDA parse_st        \  Parser state
-    AND #&DF            \  Clear "in brackets" flag
+    \ LDA parse_st        \  Parser state
+    \ not used for that anymore
+    \ AND #&DF            \  Clear "in brackets" flag
+    \ STA parse_st
+    LDA parse_st
+    ORA #&80            \  Expect double-ended operator
     STA parse_st
-    JMP _tell_clb
+    JSR debug_clb
+    CLC                 \  C=0 => more to parse
+    RTS
     
 ._deo_new_clb_arr
-    JSR pull_op_stack   \  that takes care of the instruction
-    JSR pull_op_stack   \  now A => base addr low, X => addr high    
+    JSR pull_op_stack   \  That takes care of the instruction
+    JSR pull_op_stack   \  Now A => base addr low, X => addr high    
     STA W_reg
     STX W_reg+1
     LDA #opc_ARG OR &80 \  immediate mode ARG
     LDX #W_reg
-    JSR grow_use        \  treat like a USE instruction
+    JSR grow_any        \  Treat like a USE instruction
     LDA parse_st
-    AND #&3F            \  clear "last was use"
-    ORA #&80            \  set "expect operator"
+    AND #&3F            \  Clear "last was use"
+    ORA #&80            \  Set "expect operator"
     STA parse_st
-    JMP _tell_end_aa
+    JSR debug_end_aa
+    CLC                 \  Still more to parse
+    RTS
         
 ._deo_not_clb
+    CMP #opc_TEQ        \  Equals sign
+    BNE _deo_not_equals
+    JSR debug_equals
+    LDA parse_st
+    AND #&3F
+    CMP #&20            \  stop-on-= set and stack depth = 0
+    BNE _deo_not_equals
+    LDA #61
+    STA temp_opc
+    BNE _deo_is_delim
+._deo_not_equals
     LDX temp_pri
     CPX #&1F            \  dummy priority of legitimate delimiter
     BNE _deo_not_delim
-    JSR _tell_delim
+._deo_is_delim
+    JSR debug_delim
     JSR backup_basic_ptr\  Back up to the delimiter
     JMP _deo_is_end
-
 ._deo_not_delim
 
     \  IF THE OPERATION STACK IS CLEAR, OR THE OPERATION ON THE TOP OF
@@ -567,9 +523,6 @@ ORG &7100
     \  THE (EQUAL OR HIGHER-PRIORITY) OPERATION FROM THE STACK AND
     \  GO AROUND AGAIN
     
-    \JSR say
-    \EQUS "Doing op from stack instead."
-    \EQUB 13
     JSR grow_or_alter
     JMP _deo_not_clb
     
@@ -580,19 +533,21 @@ ORG &7100
     LDA parse_st
     AND #&7F            \  expect value; preserve "last was use"
     STA parse_st
-    JMP _tell_deo
+    JSR debug_deo
+    CLC                 \  C=0 => more to parse
+    RTS
     
 ._deo_is_end
     JSR say
     EQUS "End of expression"
     EQUB 13
     
-    \  IF THERE ARE ANY OPERATIONS ON THE OPERATION STACK, THEY
-    \  NEED TO BE APPENDED TO THE PROGRAM
+    \  IF ANY OPERATIONS REMAIN ON THE OPERATION STACK, THEY NEED TO
+    \  BE APPENDED TO THE PROGRAM NOW.
     
 ._deo_end0
     LDA parse_st        \  parser state
-    AND #&3F            \  get just stack length
+    AND #&1F            \  get just stack length
     BEQ _deo_end1
     JSR grow_or_alter
     JMP _deo_end0
@@ -600,70 +555,6 @@ ORG &7100
     SEC                 \  C=1 => end of expression
     RTS
     
-._tell_end_aa
-    JSR say
-    EQUS "End of array access &"
-    BRK
-    LDA W_reg+1
-    JSR disp_hex
-    LDA W_reg
-    JSR disp_hex
-    JSR osnewl
-    CLC
-    RTS
-    
-._tell_delim
-    STA X_reg
-    TYA
-    PHA
-    TXA
-    PHA
-    
-    JSR say
-    EQUS "Delimiter "
-    BRK
-    
-    PLA
-    TAX
-    PLA
-    TAY
-    LDA temp_opc
-    JSR osasci
-    LDA #&20
-    JSR osasci
-    LDA X_reg
-    RTS
-
-._tell_clb
-    JSR say
-    EQUS "Closing bracket "
-    BRK
-    LDA temp_opc
-    JSR disp_hex
-    JSR say
-    EQUS " priority "
-    BRK
-    LDA temp_pri
-    JSR disp_hex
-    JSR osnewl
-    CLC                 \  C=0 => more to parse
-    RTS
-
-._tell_deo
-    JSR say
-    EQUS "Double ended operation "
-    BRK
-    LDA temp_opc
-    JSR disp_hex
-    JSR say
-    EQUS " priority "
-    BRK
-    LDA temp_pri
-    JSR disp_hex
-    JSR osnewl
-    CLC                 \  C=0 => more to parse
-    RTS
-
 .match_de_oper
     LDX #0              \  X is pointer into dictionary
 ._deo_new_oper
@@ -728,59 +619,95 @@ ORG &7100
     \     `------ not array access
     STA parse_st        \  initialise parser state
 
+    \  READ SOMETHING THAT LOOKS LIKE A LEFT-HAND SIDE FROM THE BASIC
+    \  PROGRAM.
+    \  IF IT'S A SIMPLE VARIABLE, PUT ITS ADDRESS INTO A "SIMPLE VARIABLE
+    \  ASSIGN" ON THE OPERATION STACK.
+    \  IF IT'S AN ARRAY ELEMENT, GROW THE PROGRAM WITH AN ARF INSTRUCTION
+    \  AND SET BIT 7 OF parse_st.
+    
+.get_lhs
     JSR skip_space
+    LDA (basic_ptr), Y
+    CMP #33             \  ! mark => word poke
+    BNE _gls_not_excl
+    JSR debug_excl
+    JSR adv_bas_ptr_1   \  Advance past the !
+    LDA parse_st
+    AND #&DF            \  Clear byte flag
+    PHA                 \  Save parser state
+    LDA #&20            \  Initialise parser state for new expression
+    STA parse_st        \    &20 because we want to stop on =
+    JSR parse_expr      \  Parse whole expression
+    PLA                 \  Retrieve parser state
+    STA parse_st
+    SEC
+    RTS
+._gls_not_excl
+    CMP #63             \  ? mark => byte poke
+    BNE _gls_not_ques
+    JSR debug_ques
+    JSR adv_bas_ptr_1   \  Advance past the ?
+    LDA parse_st
+    ORA #&20            \  Set byte flag
+    PHA                 \  Save parser state
+    LDA #&20            \  Initialise parser state for new expression
+    STA parse_st        \    &20 because we want to stop on =
+    JSR parse_expr      \  Parse whole expression
+    PLA                 \  Retrieve parser state
+    STA parse_st
+    SEC
+    RTS    
+._gls_not_ques
+    
+.set_var_CORE
     JSR test_var
     BCC _sv_exists
 ._sv_new
-    PHP
-    PHA
-    TYA
-    PHA
-    TXA
-    PHA
-    
-    JSR say
-    EQUS "New variable"
-    EQUB CR
-
-    PLA
-    TAX
-    PLA
-    TAY
-    PLA
-    PLP
-    RTS
-
-._sv_exists
-    PHP
-    PHA
-    TYA
-    PHA
-    TXA
-    PHA
-
-    BVS _sv_array
-    JSR say
-    EQUS "Existing variable"
-    EQUB CR
+    JSR debug_new_var
+    JSR create_var      \  Create variable in symbol table
+    \  From this point on, everything is the same as if we were dealing
+    \  with an existing variable.
     JMP _sv_ex_1
+
+    \  CREATE A NEW VARIABLE IN THE SYMBOL TABLE
+    \  THEN GROW THE PROGRAM WITH A USE INSTRUCTION, WHICH WILL PLACE
+    \  THE ADDRESS OF THE NEW VARIABLE ON THE CALCULATION STACK.
+    
+._sv_exists
+    \  WE HAVE AN EXISTING VARIABLE, SO WE GROW THE PROGRAM TO END UP WITH
+    \  ITS ADDRESS ON TOP OF THE CALCULATION STACK; EITHER BY MEANS OF A
+    \  USE INSTRUCTION FOR A SIMPLE VARIABLE, OR BY MEANS OF AN ARF
+    \  INSTRUCTION FOR AN ARRAY ELEMENT.
+    \
+    \  WE MAY NEED TO CHANGE THIS LATER, IF IT TURNS OUT THE VARIABLE IS
+    \  JUST THE BASE IN AN ! OR ? MEMORY ACCESS WITH OFFSET, BUT IT WILL
+    \  ALWAYS BE THE LAST INSTRUCTION, AND parse_st BIT 7 WILL TELL US IF
+    \  IT IS AN ARRAY ACCESS.
+
+    PHP                 \  Save V
+    JSR adv_basic_ptr   \  Move pointer past variable name
+    PLP                 \  Retrieve V
+    BVS _sv_array
+    JSR debug_sv_ex_var
+    JMP _sv_ex_1
+    
 ._sv_array
-    JSR say
-    EQUS "Array variable"
-    EQUB CR
 
-    PLA
-    TAX
-    PLA
-    TAY
-    PLA
-    PLP
-
+    \  ARRAY ELEMENT ASSIGNMENT;
+    \
+    \  GROW THE PROGRAM WITH INSTRUCTIONS TO GET THE ADDRESS OF THE
+    \  ARRAY ELEMENT, AND FOLLOW WITH AN ARF INSTRUCTION
+    \  THIS WILL END UP WITH THE ADDRESS TO BE ASSIGNED ON TOP OF THE
+    \  CALCULATION STACK.
+    \
+    \  IF IT TURNS OUT THAT THIS IS A BASE FOR AN OFFSET, WE WILL ALTER
+    \  THE INSTRUCTION IN PLACE TO ARG.
+    
+    JSR debug_sv_array    
     \  Put the array access on the operation stack
     LDY #0              \  Point to first byte of array structure ...
-
     \  Get the actual base address of the array
-    
     LDA var_ptr
     STA W_reg
     LDA var_ptr+1
@@ -795,25 +722,118 @@ ORG &7100
     PLA                 \  Retrieve number of subscripts
     LDX #&0C            \  Priority &0C => array access
     JSR push_op_stack
-    
     LDA parse_st
     AND #&1F            \  Stack depth
-    ORA #&80            \  Array access
+    ORA #&80            \  Set array access
+    STA parse_st
+._let_aa
+    JSR debug_opstk
+    JSR debug_aaip      \  Array assign in progress; want 01
+    LDA parse_st
+    AND #&3F            \  Do this now; we will want a value next anyway
+    PHA                 \  Save the parser state
+    LDA #0              \  Initialise parser state for new expression
+    STA parse_st
+    JSR parse_expr      \  Parse a whole expression
+    PLA                 \  Retrieve parser state
     STA parse_st
 
-    SEC                 \  always indicate a fault for now
+    \  DECREASE REMAINING SUBSCRIPT COUNT
+    
+    LDY oper_sp
+    LDA oper_stack+2,Y
+    TAX
+    DEX
+    TXA
+    STA oper_stack+2,Y
+    LDY oper_sp
+    LDA oper_stack+2,Y
+    BNE _let_aa_more
+._let_aa_done
+    JSR debug_opstk
+
+    JSR say
+    EQUS "Array access done"
+    EQUB CR
+    
+    JSR pull_op_stack   \  that takes care of the instruction
+    JSR pull_op_stack   \  now A => base addr low, X => addr high    
+    STA W_reg
+    STX W_reg+1
+    LDA #opc_ARF OR &80 \  immediate mode ARF
+    LDX #W_reg
+    JSR grow_any        \  treat like a USE instruction
+    LDA parse_st
+    AND #&3F            \  clear high bits
+    ORA #&80            \  set "array access"
+    STA parse_st
+    INC basic_ptr       \  Advance past the closing bracket
+    BNE _let_aa_2
+    INC basic_ptr+1
+._let_aa_2
+    JSR debug_opstk    
+    CLC                 \  Still more to parse
     RTS
+._let_aa_more
+    INC basic_ptr        \  Move pointer past comma
+    BNE _let_aa_more1
+    INC basic_ptr+1
+._let_aa_more1
+    JMP _let_aa
     
 ._sv_ex_1
-    PLA
-    TAX
-    PLA
-    TAY
-    PLA
-    PLP
-    
-    RTS
 
+    \  SIMPLE VARIABLE ASSIGNMENT;
+    \  GROW THE PROGRAM WITH A USE INSTRUCTION TO PUT THE ADDRESS OF THE
+    \  VARIABLE BEING ASSIGNED ON THE CALCULATION STACK.
+    \
+    \  IF IT TURNS OUT THAT THIS IS A BASE FOR AN OFFSET, WE WILL ALTER
+    \  THE INSTRUCTION IN PLACE TO USE()
+
+    LDA #&80            \  immediate mode use
+    LDX #var_ptr
+    JSR grow_any
+    LDA parse_st
+    AND #&3F            \  clear high bits (not array access)
+    STA parse_st
+    JSR debug_opstk
+    JSR debug_eoe
+    
+    \  NOW WE HAVE TO SEE IF THIS IS THE VARIABLE ITSELF, OR THE BASE FOR
+    \  AN OFFSET MEMORY ACCESS
+    
+    LDY #0
+    LDA (basic_ptr), Y  \  Save character at BASIC pointer
+    PHA
+    JSR adv_bas_ptr_1   \  Advance the BASIC pointer
+    PLA                 \  Retrieve character that was under it
+    CMP #33             \  ! mark
+    BNE _sv_not_oexcl
+    JSR debug_oexcl
+    LDA parse_st
+    AND #&9F
+    ORA #&40            \  Set "offset", clear "byte"
+    STA parse_st
+    CLC
+    RTS
+._sv_not_oexcl
+    CMP #63             \  ? mark
+    BNE _sv_not_oques
+    JSR debug_oques
+    LDA parse_st
+    AND #&9F
+    ORA #&60            \  Set "offset" and "byte"
+    STA parse_st
+    CLC
+    RTS
+._sv_not_oques
+    JSR debug_equals
+    LDA parse_st
+    AND #&9F            \  Clear "offset" and "byte"
+    STA parse_st
+    CLC
+    RTS
+    
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 \  TRY TO MATCH A VARIABLE NAME AT basic_ptr AGAINST A NAME IN THE SYMBOL
@@ -1040,8 +1060,7 @@ ORG &7100
     BNE skip_space
 ._skip_not_space
     PHA                 \  stash A .....
-    LDX #basic_ptr      \  ..... because it will get trashed
-    JSR adv_ptr_X
+    JSR adv_basic_ptr   \  
     PLA                 \  retrieve character
     LDY #0              \  reset Y to parse next item
     CLC                 \  C=0 => more to parse
@@ -1088,6 +1107,7 @@ ORG &7100
 \  PARSE A HEX CONSTANT &xxxx
 \  THE CHARACTERS colon ; : < = > ? @ ARE TREATED AS 3-9
 \  PROBABLY NOT VERY SERIOUS
+\  FAMOUS LAST WORDS
 
 .parse_hex
     JSR zero_W
@@ -1097,8 +1117,10 @@ ORG &7100
     BCC _pdn_not_digit
     CMP #71				\  G (after F)
     BCS _pdn_not_digit
-    CMP #58
+    CMP #58             \  colon (after 9)
     BCC _phn_not_af
+    CMP #65             \  A
+    BCC _pdn_not_digit
     SBC #7				\  we know here, C is set
 ._phn_not_af
     AND #&0F
@@ -1158,7 +1180,7 @@ ORG &7100
 \  ON ENTRY A = OPCODE
 \           X = POINTER TO OPERAND IN ZP
 
-.grow_use
+.grow_any
     LDY #0
     STA (code_ptr), Y   \  opcode
     INY
@@ -1439,6 +1461,9 @@ ORG &7100
 \
 \  ADVANCE POINTER AT [X] IN ZERO PAGE BY Y
 
+.adv_basic_ptr
+    LDX #basic_ptr      \  Move pointer past variable name
+    \JMP adv_ptr_X
 .adv_ptr_X
     TYA
     CLC
@@ -1449,53 +1474,55 @@ ORG &7100
 ._ap_1
     RTS
 
-\  DISPLAY INLINE TEXT
+.adv_bas_ptr_1
+    INC basic_ptr       \  Advance past the !
+    BNE _abp_1_a
+    INC basic_ptr+1
+._abp_1_a
+    RTS
+    
+\  DISPLAY INLINE TEXT, PRESERVING PROCESSOR STATUS, A, X AND Y
 \
 \  NB. THIS STOMPS ON THE VM X REGISTER!
 
+.safe_say
 .say
-    PLA
-    STA &72
-    PLA
-    STA &73
+    PHP                 \  Stash everything on the 6502 stack
+    PHA
     TYA
     PHA
-    LDY #1
-._say1
+    TXA
+    PHA                 \  Now there are 4 bytes on top of return addr-1
+    TSX                 \  &101 + stack pointer => most recently pushed
+    LDA &105, X
+    STA &72             \  Low byte of return address-1
+    LDA &106, X
+    STA &73             \  High byte of return address-1
+    LDY #1              \  Start one ahead of address on stack
+._ss_say_1
     LDA (&72), Y
-    BEQ _say2
-    JSR osasci
-    CMP #32
-    BCC _say2
+    BEQ _ss_say_2       \  Don't send CHR$(0)
     INY
-    BNE _say1
-._say2
-    CLC
-    TYA
-    ADC &72
-    STA &72
+    JSR osasci
+    CMP #&20            \  Stop printing after any control char
+    BCS _ss_say_1
+    DEY                 \  We no longer need to compensate for address-1
+._ss_say_2
+    LDX #&72            \  Advance pointer past the text
+    JSR adv_ptr_X
+    TSX                 \  Overwrite old return address with new value
+    LDA &72             \  adjusted by length of string we just printed
+    STA &105, X
+    LDA &73
+    STA &106, X
+    PLA                 \  Retrieve the values we stashed earlier
+    TAX
     PLA
     TAY
-    LDA &73
-    ADC #0
-    PHA
-    LDA &72
-    PHA
-    RTS
-
-
-\\\\.disp_var_ptr
-\\\\    PHA
-\\\\    LDA var_ptr+1
-\\\\    JSR disp_hex
-\\\\    LDA var_ptr
-\\\\    JSR disp_hex
-\\\\    LDA #32
-\\\\    JSR osasci
-\\\\    PLA
-\\\\    RTS
-\\\\
-
+    PLA
+    PLP
+    RTS                 \  To the modified address
+    
 \  DISPLAY CONTENTS OF W REGISTER AS A HEX NUMBER
 
 .disp_W
@@ -1504,11 +1531,11 @@ ORG &7100
 \  DISPLAY 16-BIT HEX NUMBER AT X,X+1 IN ZERO PAGE
 
 .disp_16bit_X
-    LDA 1, X
-    JSR disp_hex
-    LDA 0, X            \  and fall through
+    LDA 1, X            \  High byte
+    JSR disp_hex        \  Display as 2 hex digits
+    LDA 0, X            \  Low byte, and fall through
 
-\  DISPLAY HEX NUMBER IN ACCULULATOR
+\  DISPLAY ACCUMULATOR CONTENTS AS A 2-DIGIT HEX NUMBER
 
 .disp_hex
     PHA
@@ -1528,8 +1555,7 @@ ORG &7100
     PLA
     TAX
     PLA
-    RTS
-    
+    RTS    
 ._dh_digit
     CLC
     ADC #&30
@@ -1552,6 +1578,7 @@ ORG &7100
     RTS
 
 \  COPY A 16-BIT VALUE POINTED TO BY X TO VM W REGISTER
+
 .copy_to_W
     LDA 0,X
     STA W_reg
@@ -1687,10 +1714,10 @@ ALIGN &100
     EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0
 
 .array_RM
-    EQUB 3
-    EQUW 4
-    EQUW 2
-    EQUW 3
+    EQUB 3              \  3 dimensions
+    EQUW 4              \  First subscript is  0-3
+    EQUW 2              \  Second subscript is 0-1
+    EQUW 3              \  Third subscript is  0-2
 
     EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0
     EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0:EQUW 0
@@ -1698,4 +1725,9 @@ ALIGN &100
 
 ._code_end
 
-SAVE "M.PARSE4", _code_begin, _code_end, _code_done
+\  INCLUDE DEBUGGING ROUTINES
+
+INCLUDE "expr04_debug.6502"
+
+SAVE "M.PARSE4", _debug_begin, _code_end, _code_done
+\ SAVE "M.PARSE4", _code_begin, _code_end, _code_done
