@@ -24,17 +24,23 @@ opc_MUF = &13
 opc_DIP = &14
 opc_PUT = &15
 opc_PAF = &16
+opc_QUT = &17
+opc_QAF = &18
 
-opc_ARG = &17
-opc_ARP = &18
+opc_ARG = &19
+opc_ARP = &1A
+opc_ARF = &1B
 
-opc_NCH = &19
-opc_TWC = &1A
-opc_ONC = &1B
-opc_SGN = &1C
-opc_ABS = &1D
-opc_RDW = &1E
-opc_RDB = &1F
+\  IMPLICIT
+\  MONADIC
+
+opc_NCH = &1C
+opc_TWC = &1D
+opc_ONC = &1E
+opc_SGN = &1F
+opc_ABS = &20
+opc_RDW = &21
+opc_RDB = &22
 
 opc_ARR = &3C           \  array access (pseudo-op)
 opc_OPB = &3D           \  open bracket (pseudo-op)

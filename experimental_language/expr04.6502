@@ -1,3 +1,7 @@
+\  IT ONLY WORKS A BIT NOW!
+\  Can do all 10 flavours of assignment.
+\  Now need to make able to parse whole lines .....
+
 \  The expression parser is now able to be re-entrant .....
 
 \  This version includes some debugging that is no longer needed.
@@ -160,7 +164,6 @@ ORG &7100
     BEQ _pv_stk_empty   \  carry on as normal if stack is empty
     LDY oper_sp
     LDA oper_stack+1, Y \  priority of operation on top of stack
-
     CMP #&0C            \  see if it is &0C => array access
     BNE _pv_stk_empty   \  carry on if not
 
@@ -223,7 +226,7 @@ ORG &7100
     BNE _pv_clb_1
     INC basic_ptr+1
 ._pv_clb_1
-    JMP _deo_new_clb1   \  continue as though d/e )
+    JMP _deo_clb1       \  continue as though d/e )
 ._pv_clb_err
     JSR say
     EQUS ") without ( at &"
@@ -231,6 +234,10 @@ ORG &7100
     JMP _pv_disp_ptr
 ._pv_not_clb
     \  NEXT TRY FOR A NUMERIC CONSTANT
+    JSR say
+    EQUS "Trying for number"
+    EQUB CR
+    \LDY #0  \  ?????
     JSR parse_num
     BCC _pv_is_num
     \  NEXT TRY FOR A VARIABLE
@@ -261,11 +268,6 @@ ORG &7100
     PHA
     CMP #opc_OPB
     BNE _pv_not_opb
-    \ LDA parse_st
-    \ ORA #&20            \  set "in brackets" flag
-    \ not used for that anymore
-    \ STA parse_st
-    LDA #opc_OPB        \  remember what we had earlier
     LDX #&01            \  open bracket has priority &01
 ._pv_not_opb
     JSR push_op_stack
@@ -395,7 +397,7 @@ ORG &7100
     \  IF THERE IS AN ARRAY ACCESS AT THE TOP OF THE OPERATION STACK,
     \  WE WANT TO DO THE OLD THING.
     \
-    \  IF PARSE_ST BIT 5 SAYS WE ARE IN A BRACKETED EXPRESSION, THIS IS
+    \  IF WE ARE IN A BRACKETED EXPRESSION, THIS IS
     \  THE END OF THE BRACKETED EXPRESSION.  WE GROW THE PROGRAM WITH
     \  INSTRUCTIONS FROM THE STACK UNTIL WE REACH AN OPENING BRACKET,
     \  POP THIS AND SET "EXPECT D/E OPERATOR".
@@ -410,6 +412,11 @@ ORG &7100
     \  OTHERWISE, WHEN WE HIT THE END OF THE OPERATION STACK, CALL IT
     \  THE END OF THE EXPRESSION AND BACK THE PARSE POINTER UP AS THOUGH
     \  WE HAD NEVER MOVED IT ON.
+    
+    \  ALL OF THIS NEEDS REWRITING TO SAY WHAT IT ACTUALLY DOES, AS OPPOSED
+    \  TO WHAT IT WAS ONCE SUPPOSED TO DO, BEFORE THAT WAS FOUND NOT TO WORK.
+    
+    
         
 ._deo_ok1
     JSR adv_basic_ptr   \  Move pointer past matched operation
@@ -420,10 +427,10 @@ ORG &7100
     CMP #opc_CLB        \  see it it was a closing bracket
     BNE _deo_not_clb
 
-._deo_new_clb1
+._deo_clb1
     LDA parse_st        \  parser state
     AND #&1F            \  get just stack length
-    BEQ _deo_new_clb_empty
+    BEQ _deo_clb_empty
     LDY oper_sp
     
     \  IF WE SEE AN OPENING BRACKET, POP IT FROM THE STACK, CLEAR THE
@@ -431,20 +438,20 @@ ORG &7100
     
     LDA oper_stack+1, Y \  priority of operation on top of stack
     CMP #&01            \  opening bracket
-    BEQ _deo_new_clb_opb
+    BEQ _deo_clb_opb
 
     \  IF WE SEE AN ARRAY ACCESS, APPEND AN ARRAY ACCESS INSTRUCTION
     \  TO THE PROGRAM.
 
     CMP #&0C            \  array access
-    BEQ _deo_new_clb_arr
+    BEQ _deo_clb_arr
 
     \  OTHERWISE, PURGE AN OPERATION FROM THE STACK AND GROW THE PROGRAM.
     
     JSR grow_or_alter   \  add operation to program
-    JMP _deo_new_clb1
+    JMP _deo_clb1
     
-._deo_new_clb_empty
+._deo_clb_empty
     JSR say
     EQUS "Closing ) isn't ours"
     EQUB &0D
@@ -452,12 +459,8 @@ ORG &7100
     SEC                 \  C=1 => end of expression
     RTS
     
-._deo_new_clb_opb
+._deo_clb_opb
     JSR pull_op_stack   \  Discard the (
-    \ LDA parse_st        \  Parser state
-    \ not used for that anymore
-    \ AND #&DF            \  Clear "in brackets" flag
-    \ STA parse_st
     LDA parse_st
     ORA #&80            \  Expect double-ended operator
     STA parse_st
@@ -465,7 +468,7 @@ ORG &7100
     CLC                 \  C=0 => more to parse
     RTS
     
-._deo_new_clb_arr
+._deo_clb_arr
     JSR pull_op_stack   \  That takes care of the instruction
     JSR pull_op_stack   \  Now A => base addr low, X => addr high    
     STA W_reg
@@ -615,16 +618,55 @@ ORG &7100
     \     |||  |
     \     |||  stack depth = 0
     \     ||`---- not a byte
-    \     |`----- not memory access
-    \     `------ not array access
+    \     |`----- last was not use
+    \     `------ not offset
     STA parse_st        \  initialise parser state
 
     \  READ SOMETHING THAT LOOKS LIKE A LEFT-HAND SIDE FROM THE BASIC
     \  PROGRAM.
-    \  IF IT'S A SIMPLE VARIABLE, PUT ITS ADDRESS INTO A "SIMPLE VARIABLE
-    \  ASSIGN" ON THE OPERATION STACK.
+    \  IF IT'S A SIMPLE VARIABLE, GROW THE PROGRAM WITH A USE INSTRUCTION
+    \  AND SET BIT 6 OF parse_st.
     \  IF IT'S AN ARRAY ELEMENT, GROW THE PROGRAM WITH AN ARF INSTRUCTION
-    \  AND SET BIT 7 OF parse_st.
+    \  AND CLEAR BIT 6 OF parse_st.
+    
+    JSR get_lhs
+    
+    JSR adv_bas_ptr_1
+    
+    \BCC _sv_lhs_ok
+    \JSR say
+    \EQUS "Bad LHS"
+    \EQUB CR
+    \SEC
+    \RTS
+    
+._sv_lhs_ok
+
+    LDA parse_st
+    PHA                 \  The "byte" flag will be needed later
+    LDA #0
+    STA parse_st
+    JSR parse_expr
+    \BCC _sv_rhs_ok
+    \JSR say
+    \EQUS "Bad RHS"
+    \EQUB CR
+    \SEC
+    \RTS
+    
+._sv_rhs_ok
+    
+    PLA                 \  retrieve previous parser state
+    AND #&20            \  see if "byte" flag is set
+    BNE _sv_byte
+    LDA #opc_PAF
+    BNE _sv_grow
+._sv_byte
+    LDA #opc_QAF
+._sv_grow
+    JSR grow_not_use
+    CLC
+    RTS
     
 .get_lhs
     JSR skip_space
@@ -639,7 +681,11 @@ ORG &7100
     LDA #&20            \  Initialise parser state for new expression
     STA parse_st        \    &20 because we want to stop on =
     JSR parse_expr      \  Parse whole expression
+    LDA parse_st
+    AND #&40            \  Keep "last was use"
+    STA parse_st
     PLA                 \  Retrieve parser state
+    ORA parse_st
     STA parse_st
     SEC
     RTS
@@ -654,7 +700,11 @@ ORG &7100
     LDA #&20            \  Initialise parser state for new expression
     STA parse_st        \    &20 because we want to stop on =
     JSR parse_expr      \  Parse whole expression
+    LDA parse_st
+    AND #&40            \  Keep "last was use"
+    STA parse_st
     PLA                 \  Retrieve parser state
+    ORA parse_st
     STA parse_st
     SEC
     RTS    
@@ -723,14 +773,13 @@ ORG &7100
     LDX #&0C            \  Priority &0C => array access
     JSR push_op_stack
     LDA parse_st
-    AND #&1F            \  Stack depth
-    ORA #&80            \  Set array access
+    AND #&BF            \  Clear "last was use"
     STA parse_st
 ._let_aa
     JSR debug_opstk
     JSR debug_aaip      \  Array assign in progress; want 01
     LDA parse_st
-    AND #&3F            \  Do this now; we will want a value next anyway
+    AND #&BF            \  Do this now; we will want a value next anyway
     PHA                 \  Save the parser state
     LDA #0              \  Initialise parser state for new expression
     STA parse_st
@@ -764,14 +813,14 @@ ORG &7100
     LDX #W_reg
     JSR grow_any        \  treat like a USE instruction
     LDA parse_st
-    AND #&3F            \  clear high bits
-    ORA #&80            \  set "array access"
+    AND #&BF            \  Clear "last was use"
     STA parse_st
     INC basic_ptr       \  Advance past the closing bracket
     BNE _let_aa_2
     INC basic_ptr+1
 ._let_aa_2
-    JSR debug_opstk    
+    JSR debug_opstk
+    JMP _sv_maybe_offset
     CLC                 \  Still more to parse
     RTS
 ._let_aa_more
@@ -794,46 +843,104 @@ ORG &7100
     LDX #var_ptr
     JSR grow_any
     LDA parse_st
-    AND #&3F            \  clear high bits (not array access)
+    ORA #&40            \  Set "last was use"
     STA parse_st
     JSR debug_opstk
     JSR debug_eoe
     
     \  NOW WE HAVE TO SEE IF THIS IS THE VARIABLE ITSELF, OR THE BASE FOR
     \  AN OFFSET MEMORY ACCESS
-    
+._sv_maybe_offset
     LDY #0
-    LDA (basic_ptr), Y  \  Save character at BASIC pointer
-    PHA
-    JSR adv_bas_ptr_1   \  Advance the BASIC pointer
+    LDA (basic_ptr), Y
+    CMP #61             \  = sign
+    BNE _sv_not_equal
+    JSR debug_equals
+    LDA parse_st
+    AND #&5F            \  Clear "offset" and "byte"
+    STA parse_st
+    CLC
+    RTS
+._sv_not_equal
+    PHA                 \  Save character at BASIC pointer
+    JSR adv_bas_ptr_1   \  Advance BASIC pointer
     PLA                 \  Retrieve character that was under it
     CMP #33             \  ! mark
     BNE _sv_not_oexcl
+.sv_is_oexcl
     JSR debug_oexcl
     LDA parse_st
-    AND #&9F
-    ORA #&40            \  Set "offset", clear "byte"
+    AND #&5F            \  Keep stack depth and "last was use"
+    ORA #&80            \  Set "offset", clear "byte"
     STA parse_st
-    CLC
-    RTS
+    BNE _sv_offset      \  Not 0, so will always branch
 ._sv_not_oexcl
     CMP #63             \  ? mark
     BNE _sv_not_oques
+._sv_is_oques
     JSR debug_oques
     LDA parse_st
-    AND #&9F
-    ORA #&60            \  Set "offset" and "byte"
+    AND #&5F            \  Keep stack depth and "last was use"
+    ORA #&A0            \  Set "offset" and "byte"
     STA parse_st
-    CLC
-    RTS
-._sv_not_oques
-    JSR debug_equals
+._sv_offset             \  Now bit 5 is set, code is the same
+
+    \  FROM HEREON IN, THE CODE IS THE SAME WHETHER WE ARE GOING TO WRITE
+    \  A WORD OR A BYTE.
+    \  AT THE MOMENT, WE HAVE THE *ADDRESS* OF THE VARIABLE ON THE STACK.
+    \  WE NEED TO REPLACE THIS WITH THE *VALUE* OF THE VARIABLE, WHICH WILL
+    \  GIVE THE BASE ADDRESS FOR THE WRITE.
+    
+    JSR alter_instr
+    
+    JSR say
+    EQUS "Munged instruction!"
+    EQUB CR
+    
+    \  NOW THE INSTRUCTION HAS BEEN ALTERED
+    
+    BIT parse_st        \  See if there is an offset
+    BPL _sv_no_offset
     LDA parse_st
-    AND #&9F            \  Clear "offset" and "byte"
+    PHA                 \  Save the parser state
+    LDA #&20            \  Set "stop on =" flag
     STA parse_st
-    CLC
+    JSR parse_expr      \  Parse a whole expression
+    PLA                 \  Retrieve parser state
+    BIT parse_st
+    BVC _sv_ofs_lnu
+    ORA #&40            \  Set "last was use"
+    BNE _sv_ofs_1
+._sv_ofs_lnu
+    AND #&BF            \  Clear "last was use"
+._sv_ofs_1
+    STA parse_st
+    LDA #opc_ADD        \  Add the offset to the base
+    JSR grow_or_alter1    
+._sv_no_offset
+    CLC                 \  C=0 => no error
     RTS
     
+._sv_not_oques
+    SEC                 \  C=1 => error
+    RTS
+    
+.alter_instr
+    JSR backup_code_ptr \  move code_ptr to previous instruction
+    LDY #0
+    LDA (code_ptr), Y   \  Get the opcode ...
+    BIT parse_st        \  See if last instruction was USE
+    BVC _ai_not_use
+    ORA #&40            \  Change USE to USE() ...
+    BNE _ai_any         \  Not 0, so will always branch
+._ai_not_use
+    LDA #opc_ARG OR &80
+._ai_any
+    STA (code_ptr), Y
+    LDY #3
+    LDX #code_ptr
+    JMP adv_ptr_X       \  move code_ptr on
+
 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 \
 \  TRY TO MATCH A VARIABLE NAME AT basic_ptr AGAINST A NAME IN THE SYMBOL
@@ -1085,6 +1192,9 @@ ORG &7100
     CMP #38				\  & sign
     BEQ parse_hex
     DEY					\  no prefix => base 10
+    \JSR say
+    \EQUS "Dec no. "
+    \BRK
     LDA #10             \  prepare to multiply by 10
     JSR set_multiplicand
     JSR zero_W
@@ -1102,6 +1212,22 @@ ORG &7100
 	INY                 \  next digit
 	BNE _pdn_next_digit	\  not expected to fall through
 ._pdn_not_digit
+    CPY #0
+    BEQ _parse_num_ng
+._parse_num_ok
+    CLC
+    RTS
+    \PHA
+    \JSR say
+    \EQUS "End. A=&"
+    \BRK
+    \PLA
+    \PHA
+    \JSR disp_hex
+    \JSR osnewl
+    \PLA
+._parse_num_ng
+    SEC
     RTS
 
 \  PARSE A HEX CONSTANT &xxxx
