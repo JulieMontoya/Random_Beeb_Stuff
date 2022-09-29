@@ -87,6 +87,22 @@ ignored  (but anything bigger than 2 ** 15 can never be represented in 16
 bits anyway).  The upper 16 bits of the 32-bit product will be available
 to an immediately-following `DIP` instruction.
 
+### BSU
+
+Backward subtract.
+
+### MUF
+
+Multiply Fractional.  This returns the _upper_ 16 bits of the 32-bit
+product.
+
+### DIP
+
+Divide Product.  This performs a division without clearing the upper 16
+bits of the dividend.  If the immediately-preceding instruction was `MUL`
+or `POW` then the upper 16 bits of the product will be intact in the
+virtual machine's extension register.
+
 ## TESTS
 
 Tests behave similarly to double-ended operators.  They return a value
@@ -131,69 +147,59 @@ than the right-hand operand.
 
 Backward compare.  Was worth including, in case it saves an operation.
 
-### BSU
+## CONDITIONAL FLOW CONTROL
 
-Backward subtract.
+Conditional branches are treated as double-ended operations, where the left-hand operand
+is tested  (zero is considered `FALSE`, anything non-zero `TRUE`)  and the right-hand
+operand gives a destination maybe to branch to.  As with the 6502, this is in the form of
+an offset from the present code pointer.
 
-### MUF
+### IFT
 
-Multiply Fractional.  This returns the _upper_ 16 bits of the 32-bit
-product.
+IF True.  If the left-hand operand is **not** zero, the code pointer is advanced by an amount
+equal to the right-hand operand  (or backed up, if negative).  Otherwise, execution continues
+from the next instruction.
 
-### DIP
+### IFF
 
-Divide Product.  This performs a division without clearing the upper 16
-bits of the dividend.  If the immediately-preceding instruction was `MUL`
-or `POW` then the upper 16 bits of the product will be intact in the
-virtual machine's extension register.
+IF False.  If the left-hand operand **is** zero, the code pointer is advanced by an amount
+equal to the right-hand operand  (or backed up, if negative).  Otherwise, execution continues
+from the next instruction.
+
+## MEMORY ACCESS
 
 ### PUT
 
-Put a value into memory.  The right-hand operand is the address where the
+PUT a value into memory.  The right-hand operand is the address where the
 left-hand operand will be stored.
+
+### QUT
+
+Question-mark pUT.  The right-hand operand is the address where the low
+byte only of the left-hand operand will be stored.
 
 ### PAF
 
-Put Address First:  the left-hand operand is the address and the right-
+Put Address First.  The left-hand operand is the address and the right-
 hand operand is the value to be stored there.
 
-### ARG
+### QAF
 
-Array Get. The base address of the array may either be on top of the
-Stack, or given as an immediate operand.  The subscripts are pulled from
-the Stack in reverse order.
-
-The number of dimensions and size of each dimension are specified in the
-array's header, and subscript values will be forced into range by adding
-or subtracting the relevant dimension as required.  The value will be
-returned on top of the Stack.
-
-_Available in stack and immediate modes only._
-
-### ARP
-
-Array Put.  The base address of the array may either be on top of the
-Stack, or given as an immediate operand.  The subscripts are pulled from
-the Stack in reverse order  (so the subscript most recently pushed onto
-the Stack is the one processed last).  The value to be stored is pulled
-from the Stack last of all.
-
-_Available in stack and immediate modes only._
-_Not available in indirect mode._
-
-Array Put.  The value to be stored is placed on the Stack, then the subscripts in
-order.  The base address of the array may either be on top of the Stack, or specified
-in immediate mode.
+Question-mark put Address First.  The left-hand operand is the address and
+the right-hand operand is the value to be stored there.  Only a single
+byte will be written.
 
 ## SINGLE-ENDED OPERATORS
 
 Single-ended operators take the operand either from the top of the Stack
-or specified in the instruction, and return the result on top of the
-Stack.
+or specified  (possibly indirectly)  in the instruction, and return the
+result on top of the Stack.
 
 ### NCH
 
-No Change.
+No Change.  In stack mode, leaves the value on top of the Stack unchanged.
+In immediate or indirect mode, pushes the operand as specified in the
+instruction onto the Stack unchanged.
 
 ### TWC
 
@@ -218,6 +224,89 @@ Read Word.
 ### RDB
 
 Read Byte.
+
+### ARG
+
+ARray Get. The base address of the array may either be on top of the
+Stack, or given as an immediate operand.  The subscripts are pulled from
+the Stack in reverse order  (so the subscript most recently pushed onto
+the Stack is the one processed last).
+
+The number of dimensions and size of each dimension are specified in the
+array's header, and subscript values will be forced into range by adding
+or subtracting the relevant dimension as required.
+
+The value will be returned on top of the Stack.
+
+_Available in stack and immediate modes only._
+
+### ARP
+
+ARray Put.  The base address of the array may either be on top of the
+Stack, or given as an immediate operand.  The subscripts are pulled from
+the Stack in reverse order  (so the subscript most recently pushed onto
+the Stack is the one processed last).  The value to be stored is pulled
+from the Stack last of all.
+
+_Available in stack and immediate modes only._
+
+### ARF
+
+ARray Find.  The base address of the array may either be on top of the
+Stack, or given as an immediate operand.  The subscripts are pulled from
+the Stack in reverse order  (so the subscript most recently pushed onto
+the Stack is the one processed last).
+
+The _address_ where the value is stored will be returned on the Stack.
+
+_Available in stack and immediate modes only._
+
+## UNCONDITIONAL FLOW CONTROL
+
+### BCH
+
+BranCH.  The operand is an offset which is added to the code pointer.
+
+### BSP
+
+Branch and Save Pointer.  A copy of the current value of the code pointer
+is pushed onto the Stack, and the operand added to the code pointer.
+
+### RET
+
+RETurn.  The code pointer is loaded with the value at the top of the Stack,
+which gives the absolute address where execution is to continue.
+
+This has the effect -- provided everything pushed onto the Stack since then has
+been used up -- of resuming execution from the instruction immediately after
+the last `BSP` instruction.
+
+_Available in stack mode only._
+
+### JAB
+
+Jump ABsolute.  The code pointer is loaded with the value of the (immediate
+or indirect) operand, which gives the absolute address where execution is
+to continue.  **This must be used with extreme caution!**
+
+At least do something like
+```
+BSP &0000       \  Push code pointer on Stack
+PUT &043C       \  Save value on Stack in O%
+.
+.
+.
+JAB (&043C)     \  Jump to address whose value is in O%
+```
+or just rely on `RET`.
+
+_Available in immediate and indirect modes only.  The stack mode version
+of this instruction is RET._
+
+## PSEUDO-INSTRUCTIONS
+
+These are used internally to influence the parser state, and do not
+translate directly to code in the program.
 
 ### ARR
 
