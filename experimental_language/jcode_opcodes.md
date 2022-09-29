@@ -149,22 +149,25 @@ Backward compare.  Was worth including, in case it saves an operation.
 
 ## CONDITIONAL FLOW CONTROL
 
-Conditional branches are treated as double-ended operations, where the left-hand operand
-is tested  (zero is considered `FALSE`, anything non-zero `TRUE`)  and the right-hand
-operand gives a destination maybe to branch to.  As with the 6502, this is in the form of
-an offset from the present code pointer.
+Conditional branches are treated as double-ended operations, where the
+left-hand operand is tested  (zero is considered `FALSE`, anything
+non-zero `TRUE`)  and the right-hand operand gives a destination maybe
+to branch to.  As with the 6502, this is in the form of an offset from
+the present code pointer.
 
 ### IFT
 
-IF True.  If the left-hand operand is **not** zero, the code pointer is advanced by an amount
-equal to the right-hand operand  (or backed up, if negative).  Otherwise, execution continues
-from the next instruction.
+IF True.  If the left-hand operand is **not** zero, the code pointer is
+advanced by an amount equal to the right-hand operand  (or backed up, if
+the offset is negative).  Otherwise, execution continues from the next
+instruction.
 
 ### IFF
 
-IF False.  If the left-hand operand **is** zero, the code pointer is advanced by an amount
-equal to the right-hand operand  (or backed up, if negative).  Otherwise, execution continues
-from the next instruction.
+IF False.  If the left-hand operand **is** zero, the code pointer is
+advanced by an amount equal to the right-hand operand  (or backed up, if 
+the offset is negative).  Otherwise, execution continues from the next
+instruction.
 
 ## MEMORY ACCESS
 
