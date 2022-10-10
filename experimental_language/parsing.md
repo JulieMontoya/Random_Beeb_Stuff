@@ -299,6 +299,128 @@ Instead of appending a stack-mode instruction with immediate and indirect mode
 equivalents after a `USE` instruction, the `USE` is altered in place to be the
 new instruction, in the same addressing mode as the original `USE`.
 
+# WORKED EXAMPLE
+
+Consider the expression `V% - P% * M% / D%`.  This is parsed as follows:
+
+```
+Parser state : 00000000  Operation stack : empty
+Program:    empty
+```
+
+`V%` -- the operation stack is empty, so the program is grown with
+`USE (&0458)`, which will read the value in the memory location used for
+the variable V%  (it's one of the so-called static variables, and has a
+fixed location in memory)  and push it onto the Stack.
+
+```
+Parser state : 11000000  Operation stack : empty
+Program:    USE (&0458)
+```
+
+`-` -- the operation stack is empty, so `-` is pushed onto the operation
+stack together with its priority.
+
+```
+Parser state : 01000001  Operation stack : -
+```
+
+`P%` -- the program is grown with `USE (&0440)`, which will read the value
+in the memory location used for P% and push it onto the Stack.
+
+```
+Parser state : 11000001  Operation stack : -
+Program:    USE (&0458)
+            USE (&0440)
+```
+
+`*` -- this has a higher priority than the operation on top of the
+operation stack, so we push it and its priority onto the operation stack.
+
+```
+Parser state : 01000010  Operation stack : - *
+Program:    USE (&0458)
+            USE (&0440)
+```
+
+`M%` -- the program is grown with `USE (&0434)`, which will read the value
+in the memory location used for M% and push it onto the Stack.
+
+```
+Parser state : 11000010  Operation stack : - *
+Program:    USE (&0458)
+            USE (&0440)
+            USE (&0434)
+```
+
+`/` -- this has the same priority as the operation on top of the operation
+stack, so we use that instruction to grow the program.  We could grow the
+program with a `MUL` instruction, which will multiply the numbers on top of
+the Stack and replace them with the product.  But we know the last
+instruction was `USE`, so we alter that _in situ_ to `MUL (&0434)`, which
+combines the two instructions into one.  (This saves a byte in the program
+and also several ticks of the CPU clock at runtime, since we never have to
+touch the Stack: we can poke the right-hand operand straight into the
+multiplier.)  After this, the operation stack is empty, so we push the `/`
+instruction and its priority onto it.
+
+```
+Parser state : 00000010  Operation stack : - /
+Program:    USE (&0458)
+            USE (&0440)
+            MUL (&0434)
+```
+
+`D%` -- the program is grown with `USE (&0410)`, which will read the value
+in the memory location used for D% and push it onto the Stack.
+
+```
+Parser state : 11000010  Operation stack : - /
+Program:    USE (&0458)
+            USE (&0440)
+            MUL (&0434)
+            USE (&0410)
+```
+
+`(the end)` -- the operation stack is not empty, so it needs to be purged.
+The top operation is `/` and the last instruction was `USE`, so it gets
+altered to `DIP (&410)`.  The operation stack is still not empty.  The top
+operation is `-` and the last instruction was _not_ `USE`; so we grow the
+program with a stack-mode `SUB` instruction, which will pull the subtrahend
+and minuend from the Stack and push the difference.
+
+```
+Parser state : 10000001  Operation stack : -
+Program:    USE (&0458)
+            USE (&0440)
+            MUL (&0434)
+            DIP (&0410)
+
+Parser state : 10000000  Operation stack : empty
+                            \  STACK CONTENTS WHEN RUN
+Program:    USE (&0458)     \  V%
+            USE (&0440)     \  V%  P%
+            MUL (&0434)     \  V%  product
+            DIP (&0410)     \  V%  quotient
+            SUB             \  difference
+```
+
+By the time the end of the expression has been reached, the program will
+have grown to evaluate the expression, leaving only the result on top of
+the calculation Stack.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
+
+# PARSER STATE
+
+Bit | Meaning
+---:|------------------------------
+7   | Expect double-ended operator
+6   | Last instruction was `USE`
+5   | Stop on =
+4-0 | Operation stack depth
+
+
 # OPERATOR PRIORITIES
 
 Priority | Operation
