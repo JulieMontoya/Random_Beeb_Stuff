@@ -126,7 +126,9 @@ value.
 
 # PARSING AN EXPRESSION
 
-The string pointer `str_ptr` always points to the beginning of the item being
+
+
+The BASIC pointer `basic_ptr` always points to the beginning of the item being
 parsed.  If a match is found, the Y register will contain the offset to the
 first byte after the matched item, which may be the beginning of the next item
 or the end of a line.
@@ -141,9 +143,15 @@ to be parsed.  It will be necessary to push the parser state on the 6502 stack a
 the beginning of an expression, and restore it afterwards._
 
 
+The expression parser is designed to be re-entrant.  If it is necessary to parse an
+expression within an expression, it is possible to save the parser state on the 6502
+stack and call the expression parser to treat this as an expression in its own right
+and with the existing operation stack isolated.
+
+
 ## SEARCHING FOR A VALUE
 
-Any spaces are skipped, until `str_ptr` points to a non-space character in the
+Any spaces are skipped, until `basic_ptr` points to a non-space character in the
 expression buffer.  The 6502 Y register is initialised with 0.
 
 ### SINGLE-ENDED OPERATOR
@@ -156,7 +164,7 @@ itself a value),  it is processed as follows:
 The parser state remains "expecting a value".  The "last instruction was USE" flag
 is cleared.
 
-`str_ptr` is adjusted to point to the first character after the item matched.
+`basic_ptr` is adjusted to point to the first character after the item matched.
 
 ### NUMERIC CONSTANT
 
@@ -181,7 +189,7 @@ a double-ended one or an opening bracket.
 
 After parsing a numeric constant, the parser state is changed to "expecting an
 operator".  The state of the "last instruction was USE" flag will be dependent upon
-whether there were any single-ended operators before the value.  `str_ptr` is
+whether there were any single-ended operators before the value.  `basic_ptr` is
 updated to point to the first character after the value.
 
 ### VARIABLE
@@ -203,8 +211,26 @@ a double-ended one or an opening bracket.
 
 After parsing a variable, the parser state is changed to "expecting an operator".
 The state of the "last instruction was USE" flag will be dependent upon whether there
-were any single-ended operators before the value.  `str_ptr` is updated to point to
+were any single-ended operators before the value.  `basic_ptr` is updated to point to
 the first character after the variable name.
+
+### ARRAY ELEMENT
+
+Accessing an array element requires evaluating an expression for each subscript.
+
+First, the base address of the array is found.  This points to the array's
+header record, which contains the number of dimensions  (1 byte)  followed
+by the size of each one  (2 bytes each).  The base address is pushed onto
+the operation stack with an "array access" instruction.  This has priority
+&0C, with the number of subscripts remaining in the place where its opcode
+would go.
+
+The current parser state is then pushed onto the 6502 stack, and a new
+parser state set up to expect a value and not stop on an = sign, with a
+stack depth of 0.  This places the array access operation out of sight of
+the parser.
+
+.........!.........!.........!.........!.........!.........!.........!.........!
 
 ### END OF EXPRESSION (BAD)
 
@@ -213,7 +239,7 @@ or existing variable, a syntax error is generated.
 
 ## SEARCHING FOR AN OPERATOR
 
-Any spaces are skipped, until `str_ptr` points to a non-space character in the
+Any spaces are skipped, until `basic_ptr` points to a non-space character in the
 expression buffer.  The 6502 Y register is initialised with 0.
 
 If the item matched a double-ended operator  (including a closing bracket; which may be
@@ -236,7 +262,7 @@ This is repeated until the operation on top of the stack is an opening bracket
 popped from the stack.  The parser state is set to "expecting an operator" without
 affecting the "last was use" flag  (which thus remains set if the only thing inside
 the brackets was a constant or variable, even through multiple nested brackets).
-`str_ptr` is adjusted to point to the first character after the item matched.
+`basic_ptr` is adjusted to point to the first character after the item matched.
 
 ### HIGH-PRIORITY OPERATION
 
@@ -244,7 +270,7 @@ If the operation stack is empty, or the new operation priority is higher than
 the priority of the operation on top of the stack, the new operation is pushed
 onto the operator stack.  (The low priority &01 of an opening bracket ensures
 the next operation will always be pushed onto the stack.)  The "last instruction
-was USE" flag is cleared.  `str_ptr` is updated to point to the first character
+was USE" flag is cleared.  `basic_ptr` is updated to point to the first character
 after the operator matched.
 
 ### LOW-PRIORITY OPERATION
@@ -260,7 +286,7 @@ the new operation is appended to the program as a stack mode instruction.
 If we popped an operation from the stack, we test the new operation against the
 new top-of-stack.
 
-`str_ptr` is updated to point to the first character after the operator matched.
+`basic_ptr` is updated to point to the first character after the operator matched.
 
 ### END OF EXPRESSION (GOOD)
 
@@ -384,10 +410,7 @@ Program:    USE (&0458)
 
 `(the end)` -- the operation stack is not empty, so it needs to be purged.
 The top operation is `/` and the last instruction was `USE`, so it gets
-altered to `DIP (&410)`.  The operation stack is still not empty.  The top
-operation is `-` and the last instruction was _not_ `USE`; so we grow the
-program with a stack-mode `SUB` instruction, which will pull the subtrahend
-and minuend from the Stack and push the difference.
+altered to `DIP (&410)`.
 
 ```
 Parser state : 10000001  Operation stack : -
@@ -395,7 +418,14 @@ Program:    USE (&0458)
             USE (&0440)
             MUL (&0434)
             DIP (&0410)
+```
 
+The operation stack is still not empty.  The top operation is `-` and the
+last instruction was _not_ `USE`; so we grow the program with a stack-mode
+`SUB` instruction, which will pull the subtrahend and minuend from the
+Stack and push the difference.
+
+```
 Parser state : 10000000  Operation stack : empty
                             \  STACK CONTENTS WHEN RUN
 Program:    USE (&0458)     \  V%
@@ -409,9 +439,26 @@ By the time the end of the expression has been reached, the program will
 have grown to evaluate the expression, leaving only the result on top of
 the calculation Stack.
 
+
+
 .........!.........!.........!.........!.........!.........!.........!.........!
 
 # PARSER STATE
+
+The "parser state" is a single byte used to keep track of the program item
+being parsed.  The meaning of bit 6 is fixed: it always represents "the last
+instruction added to the program was `USE`".  (Bit 6 was chosen for the ease
+of testing it in 4 bytes with a `BIT` and a `BVS`.)  Bit 7, which can be
+tested in two bytes with a `BMI` instruction, usually represents something
+that needs checking often, such as "whether to expect a value or an operator"
+or "is this an `INPUT` or a `PRINT` statement?".  The lowest bits are usually
+used for some sort of counter.
+
+If we need to parse a different kind of item  (for example, a numeric value
+referred to in a `PRINT` statement), the current parser state can be saved
+on the 6502 stack and restored afterwards.  
+
+## WHILE PARSING AN EXPRESSION
 
 Bit | Meaning
 ---:|------------------------------
@@ -419,6 +466,39 @@ Bit | Meaning
 6   | Last instruction was `USE`
 5   | Stop on =
 4-0 | Operation stack depth
+
+## WHILE PARSING A PRINT OR INPUT STATEMENT
+
+`PRINT` and `INPUT` statements are parsed by the same subroutine; which
+detects items as string constants to be printed, variables or memory
+accesses to be printed or input, or delimiters which affect the cursor
+position  (e.g. `'` starts a new line).  
+
+Bit | Meaning
+---:|------------------------------
+7   | 1 = INPUT, 0 = PRINT
+6   | Last instruction was `USE`
+5   | 
+4   | 
+3   | 
+2   | 
+1   | 
+0   | 
+
+## WHILE PARSING A LIST OF VALUES
+
+Bit | Meaning
+---:|------------------------------
+7   | 1 = any size, 0 = fixed size
+6   | Last instruction was `USE`
+5   | 
+4-0 | Count of values
+
+Note that the count holds the number of values _remaining_ in the case of a
+fixed-size list; or the number of values _processed_ in the case of a
+variable-size list.
+
+
 
 
 # OPERATOR PRIORITIES
@@ -442,3 +522,14 @@ An opening bracket is treated as an operator with priority 1; any higher-priorit
 operation will always be placed on top of it on the operation stack.  When the
 corresponding closing bracket is encountered, operations are popped from the
 operation stack until the ( returns to the top of the stack, whence it is popped.  
+
+# ARRAY ACCESS INSTRUCTION
+
+Byte | Meaning
+----:|--------------------------------
+0    | Number of subscripts remaining
+1    | Priority = &0C
+2    | Low byte of base address
+3    | High byte of base address
+
+
