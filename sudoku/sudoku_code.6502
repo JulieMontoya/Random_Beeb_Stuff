@@ -12,6 +12,10 @@ product         = &80
 
 tempX           = &86
 tempY           = &87
+pixelX          = &88
+pixelY          = &89
+fix_pos         = &8A
+var_pos         = &8B
 
 ORG &7000
 
@@ -45,24 +49,34 @@ ORG &7000
     JMP calc_see_pos
 .ext_set_pixel
     JMP set_pixel
+.ext_clr_pixel
+    JMP clr_pixel
+.ext_show_seen
+    JMP show_seen
+.ext_reset_grid
+    JMP reset_grid
+.ext_test_candidate
+    JMP test_candidate
+.ext_eliminate_candidate
+    JMP eliminate_candidate
     
 .divide_by_3
-    LDX #&C0
-    STX divisor
+    LDY #&C0
+    STY divisor
 .fast_divide
-    LDX #0
-    STX quotient
+    LDY #0
+    STY quotient
 .fd1
-    TAX                 \  Save remainder in X
+    TAY                 \  Save remainder in Y
     SEC
     SBC divisor
     BCS fd2             \  Skip restore if subtraction succeeded
-    TXA                 \  Undo subtraction
+    TYA                 \  Undo subtraction
 .fd2
     ROL quotient        \  Shift in carry bit
     LSR divisor         \  Try subtracting in next lower place
     BCC fd1             \  Keep going till 1 drops out of the end
-    TAX                 \  Return remainder in X
+    TAY                 \  Return remainder in Y
     LDA quotient
     RTS
     
@@ -316,7 +330,13 @@ ORG &7000
     ORA (scr_ptr), Y
     STA (scr_ptr), Y
     RTS
-
+.clr_pixel
+    JSR get_pixel_pos
+    EOR #&FF
+    AND (scr_ptr), Y
+    STA (scr_ptr), Y
+    RTS
+    
 \  GET PIXEL POSITION
 \
 \  Expects X = 0 .. 77 and Y = 0 .. 74  (NB: 0 is at top!)
@@ -325,39 +345,38 @@ ORG &7000
 \             A = bit mask for pixel within character cell
 
 .get_pixel_pos
-    STX tempX
-    LDX #0
-    STX scr_ptr+1
-    TYA                 \  Divide Y by 3
-    JSR divide_by_3
-    STX tempY
-    STA scr_ptr
+    TYA                 \  Prepare to divide Y co-ordinate by 3
+    LDY #0              \  Clear high byte of screen pointer
+    STY scr_ptr+1
+    JSR divide_by_3     \  Now A = answer, Y = remainder
+    STA scr_ptr         \  Save a copy of (Y DIV 3)
     ASL A
     ASL A
     CLC
-    ADC scr_ptr         \  Now we have 5 * (Y DIV 3) ; max. value = 120
+    ADC scr_ptr         \  Now [scr_ptr] = 5 * (Y DIV 3) ; max. = 120
     STA scr_ptr
     ASL scr_ptr         \  Max. value = 240
-    ASL scr_ptr
+    ASL scr_ptr         \  This one might generate a carry
     ROL scr_ptr+1
     ASL scr_ptr
-    ROL scr_ptr+1
-    LDA tempX
-    LSR A               \  Halve it
+    ROL scr_ptr+1       \  Now [scr_ptr] = 40 * (Y DIV 3) ; max. = 960
+    TXA                 \  X co-ordinate 0..77
+    LSR A               \  Halve it, shifting LSB into carry
     PHP                 \  Save carry flag for later
-    SEC                 \  Add 1 to skip graphics colour control code
-    ADC scr_ptr
-    STA scr_ptr
+    SEC                 \  Add extra 1 to skip graphics colour ctrl code
+    ADC scr_ptr         \  Add horizontal character position
+    STA scr_ptr         \  Now [scr_ptr] = 40 * (Y DIV 3) + (X DIV 2) + 1
     LDA scr_ptr+1
-    ADC #&7C
+    ADC #&7C            \  Add high byte of address of start of screen
     STA scr_ptr+1
-    PLP                 \  Retrieve lowest bit of X in carry flag
-    BCS _gpp_rhs
-    LDA lh_pixels, Y
-    BNE _gpp_done       \  Always branches
+    PLP                 \  Retrieve carry flag => old lowest bit of X
+    BCC _gpp_lhs        \  Skip for a pixel on the left-hand side
 ._gpp_rhs
-    LDA rh_pixels, Y
-._gpp_done
+    INY
+    INY
+    INY                 \  Now we point to right-hand pixel value
+._gpp_lhs
+    LDA lh_pixels, Y    \  
     LDY #0
     RTS
 
@@ -365,7 +384,176 @@ ORG &7000
     EQUB &01:EQUB &04:EQUB &10
 .rh_pixels
     EQUB &02:EQUB &08:EQUB &40
+
+.show_seen
+    STX fix_pos
+    STY pixelY
+    LDA #0
+    STA var_pos
+._ss_row
+    LDA #68
+    STA pixelX
+._ss_col
+    LDX fix_pos
+    LDY var_pos
+    JSR get_see
+    PHP                 \  Save Z flag for later
+    LDX pixelX
+    LDY pixelY
+    PLP                 \  Retrieve Z flag
+    BEQ _ss_0
+    JSR set_pixel
+    BNE _ss_next        \  Will always branch
+._ss_0
+    JSR clr_pixel
+._ss_next
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #77
+    BCC _ss_col
+    INC pixelY
+    LDA var_pos
+    CMP #81
+    BCC _ss_row
+    RTS
+
+\  RESET THE GRID TO COMPLETELY EMPTY
+\
+\  BIT PATTERN FOR EACH CELL IN THE GRID IS INITIALLY AS FOLLOWS;
+\
+\  01111111 11000000
+\  |||||||| ||  ||||
+\  |1|3|5|7 |9  `--'
+\  ||2|4|6| 8|  solution
+\  solved
+
+.reset_grid
+    LDX #0
+._rsg_0
+    LDA #&7F
+    STA grid, X
+    INX
+    LDA #&C0
+    STA grid, X
+    INX
+    CPX #162
+    BCC _rsg_0
+    RTS
     
+\  TEST WHETHER A CANDIDATE IS ALLOWED IN A CELL
+\  X => CELL TO TEST
+\  A => CANDIDATE TO TEST FOR
+
+.test_candidate
+    TAY                 \  Save the candidate
+    TXA                 \  Double the grid position
+    ASL A
+    TAX
+    CPY #8              \  See which byte candidate belongs to
+    BCS _tc_byte2
+._tc_byte1
+    LDA grid, X         \  First byte of pair with candidates 1-7
+    AND bits_HL, Y      \  AND with bit for candidate
+    RTS
+._tc_byte2
+    LDA grid+1, X       \  Second byte of pair with candidates 8-9
+    AND bits_HL-8, Y    \  AND with bit for candidate
+    RTS
+
+\  ELIMINATE A CANDIDATE FROM A CELL
+\  X => CELL TO ELIMINATE FROM
+\  A => CANDIDATE TO ELIMINATE
+
+.eliminate_candidate
+    TAY                 \  Save the candidate
+    TXA                 \  Double the grid position
+    ASL A
+    TAX
+    CPY #8
+    BCS _ec_byte2
+._ec_byte1
+    LDA grid, X
+    AND bits_HL, Y
+    BEQ _ec_never_set   \  Exit if candidate was never allowed
+    LDA grid, X         \  First byte of pair with candidates 1-7
+    ORA bits_HL, Y
+    EOR bits_HL, Y
+    JMP _ec_done
+._ec_byte2
+    LDA grid+1, X       \  Second byte of pair with candidates 8-9
+    AND bits_HL-8, Y    \  AND with bit for candidate
+    BEQ _ec_never_set   \  Exit if candidate was never allowed
+    ORA bits_HL-8, Y
+    EOR bits_HL-8, Y
+._ec_done
+    CLV                 \  V=0 => not naked single
+    CLC                 \  C=0 => candidate successfully eliminated
+    
+    \  MAKE SURE SOME CANDIDATES ARE STILL ALLOWED.
+    \  IF ONLY ONE REMAINS -- CONSIDER CELL SOLVED
+    
+._ec_count_cands
+    LDA #0
+    STA multiplier      \  Use this to count allowed digits
+    STA preload         \  This is initially 0
+    LDA #&40
+    STA multiplier+1    \  Use this to hold bit mask
+    LDY #1              \  Digit we are testing for
+._ctc_b1
+    LDA grid, X         \  First byte of pair with candidates 1-7
+    BIT multiplier+1
+    BEQ _ctc_b1_0
+    INC multiplier
+    STY preload         \  Keep track of highest allowed candidate
+._ctc_b1_0
+    INY                 \  
+    LSR multiplier+1
+    BCC _ctc_b1         \  Keep going until 1 shifts out
+    
+    \  Now we need to test for candidates 8 and 9 in byte 2
+    
+    LDA grid+1, X
+    BPL _ctc_b2_0x      \  Test bit 7 of high byte
+    INC multiplier
+    STY preload
+._ctc_b2_0x
+    INY
+    BIT bits_HL+1       \  Test bit 6
+    BEQ _ctc_b2_x0
+    INC multiplier
+    STY preload
+._ctc_b2_x0
+    LDA multiplier
+    CMP #1
+    BNE _ctc_not_naked
+._ctc_naked
+    \  ONLY ONE POSSIBLE CANDIDATE REMAINS = NAKED SINGLE!
+    \  DIGIT VALUE MUST BE IN preload
+
+    LDA grid, X
+    ORA #&80
+    STA grid, X         \  Set "solved" bit
+    LDA grid+1, X
+    ORA preload
+    STA grid+1, X       \  Store cell value
+    
+    LDY preload
+    BIT _ctc_rts        \  This will set V
+._ctc_not_naked
+    CLC                 \  C=0 => successful elimination, A is count
+._ctc_rts
+    RTS
+
+    
+    
+    
+    
+    RTS
+._ec_never_set
+    SEC                 \  C=1 => candidate was never allowed
+    RTS
+
 ALIGN &100
 
 \  DIGIT PATTERNS
@@ -436,5 +624,7 @@ ORG &7800
 
     BRK
 .code_end
+
+grid            = see_table + 821
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
