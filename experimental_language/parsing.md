@@ -1,3 +1,114 @@
+# PARSING NUMERIC EXPRESSIONS
+
+An expression consists of a series of values and operators.  Operators may be single-ended,
+such as `ABS` in `ABS V%`; or double-ended, such as `+` in `V% + 1`.  A value may consist of
+a bracketed expression.
+
+There are just two simple rules for expressions:
++ A double-ended operator needs a value before and after it.
++ A value may always be preceded by a single-ended operator.
+
+## THE PARSER STATE
+
+The parser state stores the depth of the operation stack and a few flags
+as follows:
+
+BITS | MEANING
+-----|--------------------------------------------
+7   :|: Expecting a double-ended operator
+6    | Last instruction added to program was `USE`
+5    | Stop on = sign
+4-0  | Stack depth
+
+At each stage we are expecting either a value or a double-ended operator.
+The type of item we are expecting is indicated by bit 7 of the parser
+state.
+
+In the case of an array access, each individual subscript will have to be
+parsed as an expression in its own right.  For this purpose we can store
+the parser state on the 6502 stack, re-initialise it and call the parsing
+subroutine recursively; anything that was already on the operation stack
+before the array access will be hidden from the parser while dealing with
+the expression.  By the time the subroutine returns, the program will
+have grown to place the subscript on the calculation Stack.  We then
+retrieve the old parser state from the 6502 stack, and carry on with
+processing the array access.
+
+We also keep track of whether the last instruction added to the program
+was `USE`.  Instead of adding a stack mode instruction immediately after
+a `USE` instruction, we change the `USE` instruction to the same
+addressing mode  (immediate or indirect)  version of the new instruction.
+As well as taking one fewer byte, this also makes use of optimisations
+built into the virtual machine.
+
+### VALUES
+
+If we are looking for a **value** then we will be satisfied with any of:
++ An opening bracket
++ A single-ended operator
++ A numeric constant
++ A variable name
+
+If the item is an opening bracket, it is pushed onto the operation stack
+with priority &01  (the lowest; thus ensuring the next double-ended
+operation will have a higher priority than the one already on the stack);
+and the "expect operator" flag is cleared  (we are still expecting a
+value, or another single-ended operator).
+
+If the item is a single-ended operator, it is pushed onto the operation
+stack; and the "expect operator" flag is cleared  (we are still expecting
+a value, or another single-ended operator).
+
+If the item is a numeric constant (prefixed with & for hexadecimal, % for
+binary, otherwise decimal), the program is grown with a `USE` instruction
+to push its value onto the Stack, and the "Last was USE" flags and
+"Expect operator" flags are set in the parser state.
+
+If the item is a variable, the program is grown with an indirect `USE()`
+instruction to fetch its value, and the "Last was USE" and "expect
+operator" flags are set in the parser state.
+
+### DOUBLE-ENDED OPERATORS
+
+If we are looking for an **operator** then we will be satisfied with any
+of:
++ A double-ended operator
++ A closing bracket
++ A delimiter indicating the end of an expression
+
+Bit 5 of the parser state indicates that an = sign should be treated as
+the end of an expression.  (This is used in, e.g., `A%!B%=C%` to prevent
+the syntactically-valid `B%=C%` from being picked up as the offset, as
+opposed to the intended `B%` as the offset and `C%` after the `=` sign as
+the value to be stored there.)
+
+If the item is a closing bracket, we check the operation stack depth.  If
+the operation stack is empty, we assume the closing bracket does not belong
+to this expression, and that we have reached the end of the expression.
+The BASIC pointer is backed up one position, so it will be seen again
+next time.
+
+If the operation stack is not empty, we check the operation on top of the
+operation stack.  If it is an opening bracket, we pop it from the stack,
+set the "expect operator" flag in the parser state and move on to the
+next item.  If it is an array access, we pull it and the associated base
+address from the operation stack, grow the program with an `ARG`
+instruction, clear the "last was USE" and set the "expect operator" flags
+in the parser state and move on to the next item.  Otherwise we pull the
+operation from the stack, append it to the program  (either by growing the
+program with a stack mode instruction, or by altering an existing `USE`
+to make it into the corresponding immediate or indirect mode equivalent)
+and keep going around again until either the operation stack is empty, or
+we terminate for some other reason.
+
+If the item is a delimiter, we clear the carry flag and return without
+advancing the BASIC pointer, so it is visible to the next operation.
+
+
+
+
+
+
 # EXPRESSIONS
 
 An expression consists of a series of values and operators.  Operators may be single-ended,
@@ -320,3 +431,21 @@ An opening bracket is treated as an operator with priority 1; any higher-priorit
 operation will always be placed on top of it on the operation stack.  When the
 corresponding closing bracket is encountered, operations are popped from the
 operation stack until the ( returns to the top of the stack, whence it is popped.  
+
+
+
+
+# IGNORE
+
+If the item was not an operator, and the operation stack is not empty,
+the program is grown with the corresponding instructions.  The "Last was
+USE" flag allows a `USE` instruction to be altered in situ to the
+immediate or indirect mode version of the new instruction, and the flag
+is cleared.  After any instruction but `USE`, the program is grown with
+the stack mode version.  We keep going until the operation stack is
+empty.  As successive operations are pulled from the operation stack, the
+program grows with operations proceeding outwards from the innermost on
+the value originally put on the Calculation Stack, i.e. the reverse order
+of which they were pushed onto the operation stack.
+
+If the operation stack is empty, we set the "expect operator" flag.

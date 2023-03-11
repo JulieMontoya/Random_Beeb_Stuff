@@ -1,0 +1,440 @@
+scr_ptr         = &70
+see_ptr         = &72
+
+remainder       = &81
+divisor         = &82
+quotient        = &80
+
+multiplier      = &80
+preload         = &82
+multiplicand    = &84
+product         = &80
+
+tempX           = &86
+tempY           = &87
+
+ORG &7000
+
+.code_begin
+
+.ext_write_digit
+    JMP write_digit
+.ext_set_pmk
+    JMP set_pmk
+.ext_clr_pmk
+    JMP clr_pmk
+.ext_toggle_pmk
+    JMP toggle_pmk
+.ext_calc_digit_pos
+    JMP calc_digit_pos
+.ext_calc_pmk_pos
+    JMP calc_pmk_pos
+.ext_divide_by_3
+    JMP divide_by_3
+.ext_multiply
+    JMP mult16
+.ext_set_digit_colour
+    JMP set_digit_colour
+.ext_get_see
+    JMP get_see
+.ext_set_see
+    JMP set_see
+.ext_clr_see
+    JMP clr_see
+.ext_calc_see_pos
+    JMP calc_see_pos
+.ext_set_pixel
+    JMP set_pixel
+    
+.divide_by_3
+    LDX #&C0
+    STX divisor
+.fast_divide
+    LDX #0
+    STX quotient
+.fd1
+    TAX                 \  Save remainder in X
+    SEC
+    SBC divisor
+    BCS fd2             \  Skip restore if subtraction succeeded
+    TXA                 \  Undo subtraction
+.fd2
+    ROL quotient        \  Shift in carry bit
+    LSR divisor         \  Try subtracting in next lower place
+    BCC fd1             \  Keep going till 1 drops out of the end
+    TAX                 \  Return remainder in X
+    LDA quotient
+    RTS
+    
+.mult16
+    LDA #0
+    STA product+3
+    STA product+2
+.mult16_preload
+    \  Begin by shifting the multiplier right so its lowest bit is already
+    \  in the carry flag.
+    LDY #17             \  one more than we need
+    BNE _mult16_3      \  always branches; A = 0
+._mult16_1
+    BCC _mult16_2
+    \  Add the multiplicand to the high word of the product
+    CLC
+    LDA product+2
+    ADC multiplicand
+    STA product+2
+    LDA product+3
+    ADC multiplicand+1
+    STA product+3
+    \  Shift the product right
+._mult16_2
+    ROR product+3
+    ROR product+2
+._mult16_3
+    ROR product+1
+    ROR product
+    \  See if we need to go around again
+    DEY
+    BNE _mult16_1
+    RTS
+    
+.set_mulcnd
+    STA multiplicand
+    LDA #0
+    STA multiplicand+1
+    RTS
+    
+.alt_calc_see_pos
+    STX preload
+    STY multiplier
+    LDA #81
+    STA multiplicand
+    LDA #0
+    STA multiplier+1
+    STA preload+1
+    STA multiplicand+1
+    JSR mult16_preload
+    LDA product
+    LDX product+1
+    RTS
+
+\  CALCULATE SCREEN ADDRESS FROM DIGIT POSITION
+\  ON ENTRY X, Y GIVE DIGIT POSITION
+\  A IS PRESERVED 
+
+.calc_digit_pos
+    PHA
+    STY scr_ptr             \  Place copy of Y co-ordinate in pointer
+    LDA #0
+    STA scr_ptr+1
+    TYA                 \  Work with Y co-ordinate in A
+    ASL  A
+    ASL  A              \  Now A = Y * 4
+    CLC                 \  No harm in making sure
+    ADC scr_ptr         \  Add the copy we saved earlier
+    STA scr_ptr         \  Now [scr_ptr] = Y * 5 ; max. value = 40
+    ASL scr_ptr
+    ASL scr_ptr
+    ASL scr_ptr         \  max. value = 320 -- may set C
+    ROL scr_ptr+1
+    ASL scr_ptr
+    ROL scr_ptr+1       \  Now [scr_ptr, scr_ptr+1] = Y * 80
+    TXA                 \  Work with X co-ordinate in A
+    ASL  A
+    ASL  A              \  Now A = X * 4
+    CLC
+    ADC scr_ptr
+    STA scr_ptr
+    BCC _cdp1           \  Skip if no carry
+    INC scr_ptr+1       \  Now [scr_ptr, scr_ptr+1] = Y * 80 + X * 4
+._cdp1
+    CLC                 \  Add beginning of screen to [scr_ptr, scr_ptr+1]
+    LDA #&7C
+    ADC scr_ptr+1
+    STA scr_ptr+1
+    PLA                 \  Retrieve the value saved earlier
+.safe_return
+    RTS
+    
+\  WRITE DIGIT A IN POSITION (X, Y)
+\
+\  On entry X => X co-ordinate in main grid
+\           Y => Y co-ordinate in main grid
+\           A = Digit to write; 0 erases digit
+
+.write_digit
+    JSR calc_digit_pos
+    ASL  A
+    ASL  A              \  Now A = digit * 4
+    TAX                 \  This is index into table.
+    LDY #1
+    JSR digit_row
+    JSR digit_row2
+    LDY #41
+    JSR digit_row
+.digit_row2
+    LDA #&20
+    STA (scr_ptr),Y
+    RTS
+.digit_row
+    JSR digit_row1
+.digit_row1
+    LDA digit_patt,X
+    INX
+    STA (scr_ptr),Y
+    INY
+    RTS
+    
+\  CALCULATE SCREEN ADDRESS FOR PENCIL MARK POSITION
+\  Pencil marks are a 3*3 grid of dots
+\
+\   1  2  3
+\   4  5  6
+\   7  8  9
+\
+\  On entry X => X co-ordinate in main grid
+\           Y => Y co-ordinate in main grid
+
+.calc_pmk_pos
+    JSR calc_digit_pos
+    STA &72             \  Save copy of A
+    ASL  A              \  Multiply by 2
+    ADC &72             \  Add copy to get 3 * digit
+    ASL  A              \  Double to get 6 * digit
+    TAX
+    LDY #1
+    RTS
+
+\  SET A PENCIL MARK
+    
+.set_pmk
+    JSR calc_pmk_pos
+    JSR set_row
+    LDY #41             \  Beginning of second row
+.set_row                \  Set row of pixel pattern for digit
+    JSR set_row1
+    JSR set_row1
+.set_row1
+    LDA (scr_ptr),Y
+    ORA pmk_patt,X
+    JMP pmk_write
+
+\  CLEAR A PENCIL MARK
+
+.clr_pmk
+    JSR calc_pmk_pos
+    JSR clr_row
+    LDY #41             \  Beginning of second row
+.clr_row                \  Unset row of pixel pattern for digit
+    JSR clr_row1
+    JSR clr_row1
+.clr_row1
+    LDA (scr_ptr),Y
+    ORA pmk_patt,X      \  Setting and inverting just the bit we want is
+    EOR pmk_patt,X      \  quicker than inverting it to create a mask
+    JMP pmk_write
+    
+\  TOGGLE A PENCIL MARK ON <-> OFF
+
+.toggle_pmk
+    JSR calc_pmk_pos
+    JSR toggle_row
+    LDY #41             \  Beginning of second row
+.toggle_row             \  EOR pixel pattern row for digit with screen
+    JSR toggle_row1
+    JSR toggle_row1
+.toggle_row1
+    LDA (scr_ptr),Y
+    EOR pmk_patt,X
+.pmk_write
+    INX                 \  Next position in pattern
+    STA (scr_ptr),Y
+    INY                 \  Next position on screen
+    RTS
+
+.set_digit_colour
+    JSR calc_digit_pos
+    AND #&07
+    BNE _sdc_not0
+    LDA #7
+._sdc_not0
+    ORA #&90            \  Set graphics colour
+    LDY #0
+    STA (scr_ptr), Y
+    LDY #40
+    STA (scr_ptr), Y
+    RTS
+
+.calc_see_pos
+    STX preload         \  Begin with X in preload ...
+    STY multiplier      \  ... Y in multiplier ...
+    LDA #81             \  ... 81 in multiplicand
+    STA multiplicand
+    LDA #0              \  All high bytes are 0 
+    STA multiplier+1
+    STA preload+1
+    STA multiplicand+1
+    JSR mult16_preload
+    LDA product
+    AND #&07            \  Equivalent to MOD 8
+    TAX                 \  Now X holds position MOD 8
+    LSR product+1
+    ROR product
+    LSR product+1
+    ROR product
+    LSR product+1
+    ROR product         \  Equivalent to DIV 8
+    CLC
+    LDA product
+    ADC #see_table MOD256
+    STA see_ptr
+    LDA product+1
+    ADC #see_table DIV256
+    STA see_ptr+1
+    LDY #0
+    LDA (see_ptr), Y
+    RTS
+    
+.get_see
+    JSR calc_see_pos
+    AND bits_HL, X
+    RTS
+    
+.set_see
+    JSR calc_see_pos
+    ORA bits_HL, X
+    BNE _clr_see1       \  Always branches
+.clr_see
+    JSR calc_see_pos
+    ORA bits_HL, X      \  Set it
+    EOR bits_HL, X      \  Toggle it
+._clr_see1
+    STA (see_ptr), Y
+    RTS
+
+.set_pixel
+    JSR get_pixel_pos
+    ORA (scr_ptr), Y
+    STA (scr_ptr), Y
+    RTS
+
+\  GET PIXEL POSITION
+\
+\  Expects X = 0 .. 77 and Y = 0 .. 74  (NB: 0 is at top!)
+\
+\  On return, scr_ptr points to screen location
+\             A = bit mask for pixel within character cell
+
+.get_pixel_pos
+    STX tempX
+    LDX #0
+    STX scr_ptr+1
+    TYA                 \  Divide Y by 3
+    JSR divide_by_3
+    STX tempY
+    STA scr_ptr
+    ASL A
+    ASL A
+    CLC
+    ADC scr_ptr         \  Now we have 5 * (Y DIV 3) ; max. value = 120
+    STA scr_ptr
+    ASL scr_ptr         \  Max. value = 240
+    ASL scr_ptr
+    ROL scr_ptr+1
+    ASL scr_ptr
+    ROL scr_ptr+1
+    LDA tempX
+    LSR A               \  Halve it
+    PHP                 \  Save carry flag for later
+    SEC                 \  Add 1 to skip graphics colour control code
+    ADC scr_ptr
+    STA scr_ptr
+    LDA scr_ptr+1
+    ADC #&7C
+    STA scr_ptr+1
+    PLP                 \  Retrieve lowest bit of X in carry flag
+    BCS _gpp_rhs
+    LDA lh_pixels, Y
+    BNE _gpp_done       \  Always branches
+._gpp_rhs
+    LDA rh_pixels, Y
+._gpp_done
+    LDY #0
+    RTS
+
+.lh_pixels
+    EQUB &01:EQUB &04:EQUB &10
+.rh_pixels
+    EQUB &02:EQUB &08:EQUB &40
+    
+ALIGN &100
+
+\  DIGIT PATTERNS
+\
+\  EACH DIGIT HAS 4 BYTES WHICH GIVE THE CHARACTER CODES FOR ITS GLYPH
+\  IN EACH OF 2 ROWS OF 2 COLUMNS.  A THIRD, EMPTY COLUMN WILL BE ADDED
+\  WHEN IT IS WRITTEN TO THE SCREEN.
+
+.digit_patt
+    EQUD &20202020
+    EQUD &25203528
+    EQUD &2C2D7B73
+    EQUD &2E2C7B73
+    EQUD &2A207A75
+    EQUD &2E2C7377
+    EQUD &2E2D7377
+    EQUD &2A206B27
+    EQUD &2E2D7B77
+    EQUD &2E2C7B77
+
+\  PENCIL MARK PATTERNS
+\
+\  EACH DIGIT HAS 6 BYTES WHICH GIVE THE PIXEL VALUES IN EACH OF 2 ROWS
+\  OF 3 COLUMNS.
+
+.pmk_patt
+    EQUW &0000:EQUD &00000000
+    EQUW &0001:EQUD &00000000
+    EQUW &0100:EQUD &00000000
+    EQUW &0000:EQUD &00000001
+    EQUW &0010:EQUD &00000000
+    EQUW &1000:EQUD &00000000
+    EQUW &0000:EQUD &00000010
+    EQUW &0000:EQUD &00000400
+    EQUW &0000:EQUD &00040000
+    EQUW &0000:EQUD &04000000
+
+\  HIGH NYBBLE = Y CO-ORDINATE
+\  LOW NYBBLE  = X CO-ORDINATE
+
+.xy_coords
+    EQUD &03020100:EQUD &07060504:EQUB &08
+    EQUD &13121110:EQUD &17161514:EQUB &18
+    EQUD &23222120:EQUD &27262524:EQUB &28
+    EQUD &33323130:EQUD &37363534:EQUB &38
+    EQUD &43424140:EQUD &47464544:EQUB &48
+    EQUD &53525150:EQUD &57565554:EQUB &58
+    EQUD &63626160:EQUD &67666564:EQUB &68
+    EQUD &73727170:EQUD &77767574:EQUB &78
+    EQUD &83828180:EQUD &87868584:EQUB &88
+
+.boxes
+    EQUD &01000000:EQUD &02020101:EQUB &02
+    EQUD &01000000:EQUD &02020101:EQUB &02
+    EQUD &01000000:EQUD &02020101:EQUB &02
+    EQUD &04030303:EQUD &05050404:EQUB &05
+    EQUD &04030303:EQUD &05050404:EQUB &05
+    EQUD &04030303:EQUD &05050404:EQUB &05
+    EQUD &07060606:EQUD &08080707:EQUB &08
+    EQUD &07060606:EQUD &08080707:EQUB &08
+    EQUD &07060606:EQUD &08080707:EQUB &08
+
+.bits_HL
+    EQUD &10204080:EQUD &01020408
+ORG &7800
+
+.see_table
+
+    BRK
+.code_end
+
+SAVE "M.SUDOKU0", code_begin, code_end, safe_return
