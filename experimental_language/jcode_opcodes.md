@@ -11,8 +11,8 @@ result, if any, is returned on the top of the calculation Stack.
 ## IMMEDIATE MODE
 
 The  (right-hand)  operand is specified in the instruction  (if there is
-a left-hand operand, it is on top of the Stack).  The result, if any, is
-returned on the top of the calculation Stack.
+a left-hand operand, it is already on top of the Stack).  The result, if
+any, is returned on the top of the calculation Stack.
 
 Immediate mode opcodes have bit 7 set.
 
@@ -24,6 +24,8 @@ The result, if any, is returned on the top of the calculation Stack.
 
 Indirect mode opcodes have bits 7 and 6 set.
 
+# THE INSTRUCTIONS
+
 ## DUP
 
 DUPlicate the value on top of the calculation Stack.
@@ -32,9 +34,17 @@ _Available in stack mode only._
 
 ## USE
 
-Pushes a value onto the calculation Stack.
+Push a value onto the calculation Stack.
 
 _Available in immediate and indirect modes only._
+
+### IMMEDIATE MODE
+
+`USE &0019       \  PLOT` pushes the _value_ &0019 onto the Stack.
+
+### INDIRECT MODE
+
+`USE (&0460)     \  X%` pushes the _contents_ of address &0460 onto the Stack.
 
 ## DOUBLE-ENDED OPERATIONS
 
@@ -43,7 +53,8 @@ the left-hand operand.  The result is returned on top of the Stack.
 
 ### EOR
 
-Logic Exclusive OR.
+Logic Exclusive OR.  Each bit of the result is found by EORing the
+corresponding bits in the left-hand and right-hand operands.
 
 ### ORI
 
@@ -202,19 +213,23 @@ result on top of the Stack.
 
 No Change.  In stack mode, leaves the value on top of the Stack unchanged.
 In immediate or indirect mode, pushes the operand as specified in the
-instruction onto the Stack unchanged.
+instruction onto the Stack unchanged  (this behaviour is the same as
+`USE`; since any instruction in these modes behaves as though preceded by
+a `USE` instruction.)
 
 ### TWC
 
-Twos Complement.
+Twos Complement:  Flip the bits and add 1, making a positive number
+negative or a negative number positive.
 
 ### ONC
 
-Ones complement.
+Ones complement:  logic NOT each bit.
 
 ### SGN
 
-Signum function.
+Signum function.  Returns 1 if the value is greater than 0, -1 if the
+value is less than zero or 0 if the value is equal to zero.
 
 ### ABS
 
