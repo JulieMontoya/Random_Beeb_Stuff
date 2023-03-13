@@ -17,6 +17,11 @@ pixelY          = &89
 fix_pos         = &8A
 var_pos         = &8B
 
+\  ERROR CODES
+
+E_NOT_ALLOWED   = 51
+    
+
 ORG &7000
 
 .code_begin
@@ -539,21 +544,32 @@ ORG &7000
     STA grid+1, X       \  Store cell value
     
     LDY preload
-    BIT _ctc_rts        \  This will set V
+    BIT _ctc_rts        \  This will set V=1 => cell now solved
 ._ctc_not_naked
     CLC                 \  C=0 => successful elimination, A is count
 ._ctc_rts
     RTS
-
     
-    
-    
-    
-    RTS
 ._ec_never_set
     SEC                 \  C=1 => candidate was never allowed
     RTS
 
+\  SET A DIGIT TO A DEFINITE VALUE
+
+.set_digit
+    JSR test_candidate
+    BNE _sd_1
+    BRK
+    EQUB E_NOT_ALLOWED
+    EQUS "Not allowed"
+    BRK
+._sd_1
+    LDA #&80
+    STA grid, X
+    TYA
+    STA grid+1, X
+    RTS
+    
 ALIGN &100
 
 \  DIGIT PATTERNS
