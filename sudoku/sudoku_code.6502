@@ -64,6 +64,8 @@ ORG &7000
     JMP test_candidate
 .ext_eliminate_candidate
     JMP eliminate_candidate
+.ext_set_digit
+    JMP set_digit
     
 .divide_by_3
     LDY #&C0
@@ -484,6 +486,7 @@ ORG &7000
     LDA grid, X         \  First byte of pair with candidates 1-7
     ORA bits_HL, Y
     EOR bits_HL, Y
+    STA grid, X
     JMP _ec_done
 ._ec_byte2
     LDA grid+1, X       \  Second byte of pair with candidates 8-9
@@ -491,6 +494,7 @@ ORG &7000
     BEQ _ec_never_set   \  Exit if candidate was never allowed
     ORA bits_HL-8, Y
     EOR bits_HL-8, Y
+    STA grid+1, X
 ._ec_done
     CLV                 \  V=0 => not naked single
     CLC                 \  C=0 => candidate successfully eliminated
