@@ -1,5 +1,6 @@
 scr_ptr         = &70
 see_ptr         = &72
+text_ptr        = &74
 
 remainder       = &81
 divisor         = &82
@@ -16,6 +17,11 @@ pixelX          = &88
 pixelY          = &89
 fix_pos         = &8A
 var_pos         = &8B
+
+\  MOS ENTRY POINTS
+
+osasci          = &FFE3
+oswrch          = &FFEE
 
 \  ERROR CODES
 
@@ -473,6 +479,7 @@ ORG &7000
 \  A => CANDIDATE TO ELIMINATE
 
 .eliminate_candidate
+    CLV                 \  V=0 => not naked single
     TAY                 \  Save the candidate
     TXA                 \  Double the grid position
     ASL A
@@ -539,9 +546,7 @@ ORG &7000
 ._ctc_naked
     \  ONLY ONE POSSIBLE CANDIDATE REMAINS = NAKED SINGLE!
     \  DIGIT VALUE MUST BE IN preload
-
-    LDA grid, X
-    ORA #&80
+    LDA #&80
     STA grid, X         \  Set "solved" bit
     LDA grid+1, X
     ORA preload
@@ -573,6 +578,130 @@ ORG &7000
     TYA
     STA grid+1, X
     RTS
+
+.conv_xy
+    TAX
+.conv_xyX
+    LDA xy_coords, X
+    TAX
+    JSR lsra4
+    TAY
+    TXA
+    AND #&0F
+    TAX
+    RTS
+    
+.lsra4
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    RTS
+
+\  CONVERT A CELL POSITION 0..80 TO A HUMAN-READABLE ROW AND COLUMN
+\  E.G.  0 => R1C1, 12 => R2C4, 40 => R5C5, 63 => R7C1, 80 => R9C9
+\  POSITION SHOULD BE IN X
+\  PRESERVES A, X AND Y
+    
+.disp_pos
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+    JSR conv_xyX
+    LDA #&52            \  "R"
+    JSR oswrch
+    TYA
+    SEC                 \  display row number starting from 1
+    ADC #&30            \  ASCII code for 0
+    JSR oswrch
+    LDA #&43            \  "C"
+    JSR oswrch
+    TXA
+    SEC                 \  display column number starting from 1
+    ADC #&30
+    JSR oswrch
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    RTS
+
+.count_all_cands
+    TXA
+    ASL A
+    TAX
+._cac_x_dbld
+    LDA grid, X
+    STA scr_ptr         \  Make copy of allowed candidates
+    LDA grid+1, X
+    STA scr_ptr+1
+    JSR asl_scr_ptr
+    LDX #1              \  Count digit in X
+._cac_test_digit
+    JSR asl_scr_ptr
+    BCC _cac_not_allowed
+    INC cand_count, X
+._cac_not_allowed
+    INX
+    CPX #9
+    BCC _cac_test_digit
+    RTS
+.asl_scr_ptr
+    ASL scr_ptr
+    ROL scr_ptr+1
+    RTS
+    
+.clear_cand_counts
+    LDX #9
+    LDA #0
+._ccc_1
+    STA cand_count, X
+    DEX
+    BPL _ccc_1
+    RTS
+
+    
+.say
+    PHP                 \  Stash everything on the 6502 stack
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA                 \  Now there are 4 bytes on top of return addr-1
+    TSX                 \  &101 + stack pointer => most recently pushed
+    LDA &105, X
+    STA text_ptr        \  Low byte of return address-1
+    LDA &106, X
+    STA text_ptr+1      \  High byte of return address-1
+    LDY #1              \  Start one ahead of address on stack
+._ss_say_1
+    LDA (text_ptr), Y
+    BEQ _ss_say_2       \  Don't send CHR$(0)
+    INY
+    JSR osasci
+    CMP #&20            \  Stop printing after any control char
+    BCS _ss_say_1
+    DEY                 \  We no longer need to compensate for address-1
+._ss_say_2
+    TYA                 \  Overwrite old return address with new value
+    CLC                 \  adjusted by length of string we just printed
+    ADC text_ptr
+    TSX
+    STA &105, X
+    LDA text_ptr+1
+    ADC #0
+    STA &106, X
+    PLA                 \  Retrieve the values we stashed earlier
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+    RTS                 \  To the modified address
+
     
 ALIGN &100
 
@@ -646,5 +775,6 @@ ORG &7800
 .code_end
 
 grid            = see_table + 821
+cand_count      = grid + 162
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
