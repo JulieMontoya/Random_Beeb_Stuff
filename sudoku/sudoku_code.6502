@@ -18,6 +18,9 @@ pixelY          = &89
 fix_pos         = &8A
 var_pos         = &8B
 
+digit           = &8D
+cand_copy       = &8E
+
 \  MOS ENTRY POINTS
 
 osasci          = &FFE3
@@ -32,46 +35,53 @@ ORG &7000
 
 .code_begin
 
-.ext_write_digit
-    JMP write_digit
-.ext_set_pmk
-    JMP set_pmk
-.ext_clr_pmk
-    JMP clr_pmk
-.ext_toggle_pmk
-    JMP toggle_pmk
-.ext_calc_digit_pos
-    JMP calc_digit_pos
-.ext_calc_pmk_pos
-    JMP calc_pmk_pos
-.ext_divide_by_3
-    JMP divide_by_3
-.ext_multiply
-    JMP mult16
-.ext_set_digit_colour
-    JMP set_digit_colour
-.ext_get_see
-    JMP get_see
-.ext_set_see
-    JMP set_see
-.ext_clr_see
-    JMP clr_see
-.ext_calc_see_pos
-    JMP calc_see_pos
+.ext_reset_grid
+    JMP reset_grid
+.ext_set_digit
+    JMP set_digit
 .ext_set_pixel
     JMP set_pixel
 .ext_clr_pixel
     JMP clr_pixel
 .ext_show_seen
     JMP show_seen
-.ext_reset_grid
-    JMP reset_grid
+.ext_test_solved
+    JMP test_solved
 .ext_test_candidate
     JMP test_candidate
 .ext_eliminate_candidate
     JMP eliminate_candidate
-.ext_set_digit
-    JMP set_digit
+.ext_disp_pos
+    JMP disp_pos
+.ext_disp_contents
+    JMP disp_contents
+.ext_get_see
+    JMP get_see
+
+\    .ext_write_digit
+\        JMP write_digit
+\    .ext_set_pmk
+\        JMP set_pmk
+\    .ext_clr_pmk
+\        JMP clr_pmk
+\    .ext_toggle_pmk
+\        JMP toggle_pmk
+\    .ext_calc_digit_pos
+\        JMP calc_digit_pos
+\    .ext_calc_pmk_pos
+\        JMP calc_pmk_pos
+\    .ext_divide_by_3
+\        JMP divide_by_3
+\    .ext_multiply
+\        JMP mult16
+\    .ext_set_digit_colour
+\        JMP set_digit_colour
+\    .ext_set_see
+\        JMP set_see
+\    .ext_clr_see
+\        JMP clr_see
+\    .ext_calc_see_pos
+\        JMP calc_see_pos
     
 .divide_by_3
     LDY #&C0
@@ -435,22 +445,22 @@ ORG &7000
 \
 \  BIT PATTERN FOR EACH CELL IN THE GRID IS INITIALLY AS FOLLOWS;
 \
-\  01111111 11000000
-\  |||||||| ||  ||||
-\  |1|3|5|7 |9  `--'
-\  ||2|4|6| 8|  solution
-\  solved
+\  cands_17, X          cands_89v, X
+\           01111111            11000000
+\           ||||||||            ||  ||||
+\           |1|3|5|7            |9  `--'
+\           | 2 4 6             8   value
+\      solved
 
 .reset_grid
     LDX #0
 ._rsg_0
     LDA #&7F
-    STA grid, X
-    INX
+    STA cands_17, X
     LDA #&C0
-    STA grid, X
+    STA cands_89v, X
     INX
-    CPX #162
+    CPX #81
     BCC _rsg_0
     RTS
     
@@ -459,18 +469,15 @@ ORG &7000
 \  A => CANDIDATE TO TEST FOR
 
 .test_candidate
-    TAY                 \  Save the candidate
-    TXA                 \  Double the grid position
-    ASL A
-    TAX
+    TAY                 \  Candidate for which we are testing
     CPY #8              \  See which byte candidate belongs to
-    BCS _tc_byte2
-._tc_byte1
-    LDA grid, X         \  First byte of pair with candidates 1-7
+    BCS _tc_89
+._tc_17
+    LDA cands_17, X     \  Byte with candidates 1-7
     AND bits_HL, Y      \  AND with bit for candidate
     RTS
-._tc_byte2
-    LDA grid+1, X       \  Second byte of pair with candidates 8-9
+._tc_89
+    LDA cands_89v, X    \  Byte with candidates 8-9 and value
     AND bits_HL-8, Y    \  AND with bit for candidate
     RTS
 
@@ -481,27 +488,22 @@ ORG &7000
 .eliminate_candidate
     CLV                 \  V=0 => not naked single
     TAY                 \  Save the candidate
-    TXA                 \  Double the grid position
-    ASL A
-    TAX
     CPY #8
-    BCS _ec_byte2
-._ec_byte1
-    LDA grid, X
+    BCS _ec_89
+._ec_17
+    LDA cands_17, X
     AND bits_HL, Y
     BEQ _ec_never_set   \  Exit if candidate was never allowed
-    LDA grid, X         \  First byte of pair with candidates 1-7
+    LDA cands_17, X     \  Byte with candidates 1-7
     ORA bits_HL, Y
     EOR bits_HL, Y
-    STA grid, X
+    STA cands_17, X
     JMP _ec_done
-._ec_byte2
-    LDA grid+1, X       \  Second byte of pair with candidates 8-9
-    AND bits_HL-8, Y    \  AND with bit for candidate
-    BEQ _ec_never_set   \  Exit if candidate was never allowed
+._ec_89
+    LDA cands_89v, X    \  Byte with candidates 8-9
     ORA bits_HL-8, Y
     EOR bits_HL-8, Y
-    STA grid+1, X
+    STA cands_89v, X
 ._ec_done
     CLV                 \  V=0 => not naked single
     CLC                 \  C=0 => candidate successfully eliminated
@@ -517,7 +519,7 @@ ORG &7000
     STA multiplier+1    \  Use this to hold bit mask
     LDY #1              \  Digit we are testing for
 ._ctc_b1
-    LDA grid, X         \  First byte of pair with candidates 1-7
+    LDA cands_17, X     \  Byte with candidates 1-7
     BIT multiplier+1
     BEQ _ctc_b1_0
     INC multiplier
@@ -527,15 +529,15 @@ ORG &7000
     LSR multiplier+1
     BCC _ctc_b1         \  Keep going until 1 shifts out
     
-    \  Now we need to test for candidates 8 and 9 in byte 2
+    \  Now we need to test for candidates 8 and 9
     
-    LDA grid+1, X
-    BPL _ctc_b2_0x      \  Test bit 7 of high byte
+    LDA cands_89v, X
+    BPL _ctc_b2_0x      \  Test bit 7 => 8 allowed
     INC multiplier
     STY preload
 ._ctc_b2_0x
     INY
-    BIT bits_HL+1       \  Test bit 6
+    BIT bits_HL+1       \  Test bit 6 => 9 allowed
     BEQ _ctc_b2_x0
     INC multiplier
     STY preload
@@ -547,14 +549,15 @@ ORG &7000
     \  ONLY ONE POSSIBLE CANDIDATE REMAINS = NAKED SINGLE!
     \  DIGIT VALUE MUST BE IN preload
     LDA #&80
-    STA grid, X         \  Set "solved" bit
-    LDA grid+1, X
+    STA cands_17, X     \  Set "solved" bit
+    LDA cands_89v, X
     ORA preload
-    STA grid+1, X       \  Store cell value
-    
+    STA cands_89v, X    \  Store cell value
     LDY preload
     BIT _ctc_rts        \  This will set V=1 => cell now solved
+    RTS
 ._ctc_not_naked
+    CLV                 \  V=0 => not naked single
     CLC                 \  C=0 => successful elimination, A is count
 ._ctc_rts
     RTS
@@ -574,9 +577,9 @@ ORG &7000
     BRK
 ._sd_1
     LDA #&80
-    STA grid, X
+    STA cands_17, X
     TYA
-    STA grid+1, X
+    STA cands_89v, X
     RTS
 
 .conv_xy
@@ -629,29 +632,80 @@ ORG &7000
     PLA
     RTS
 
-.count_all_cands
+.disp_contents
+    PHA
+    TYA
+    PHA
+\    STX scr_ptr         \  Will be safe here for now
     TXA
-    ASL A
+    PHA
+    LDA cands_17, X
+    STA cand_copy
+    LDA cands_89v, X
+    STA cand_copy+1
+\    LDX scr_ptr
+    JSR conv_xyX        \  Now X, Y hold co-ords
+    BIT cand_copy       \  Bit 7 = 1 => solved
+    BPL _dcc_pmark
+._dcc_digit
+    LDA cand_copy+1     \  Solved digit value
+    JSR write_digit
+    JMP _dcc_end
+._dcc_pmark
+    STX tempX           \  Save X co-ordinate
+    STY tempY           \  Save Y co-ordinate
+    JSR asl_cand_copy   \  Avoid a useless first trip around the loop
+    LDA #1
+    STA digit
+._dcc_test
+    JSR asl_cand_copy
+    BCC _dcc_pmk_0
+    JSR set_pmk
+    JMP _dcc_next
+._dcc_pmk_0
+    JSR clr_pmk
+._dcc_next
+    INC digit
+    LDA digit
+    LDX tempX           \  Retrieve X co-ordinate
+    LDY tempY           \  Retrieve Y co-ordinate
+    CMP #10
+    BCC _dcc_test       \  Test next candidate
+._dcc_end
+    PLA
     TAX
-._cac_x_dbld
-    LDA grid, X
-    STA scr_ptr         \  Make copy of allowed candidates
-    LDA grid+1, X
-    STA scr_ptr+1
-    JSR asl_scr_ptr
-    LDX #1              \  Count digit in X
-._cac_test_digit
-    JSR asl_scr_ptr
+    PLA
+    TAY
+    PLA
+    RTS
+
+.count_all_cands
+    LDA cands_17, X
+    STA cand_copy       \  Make copy of allowed candidates
+    BPL _cac_not_solved
+    LDA cands_89v, X    \  The value of the digit
+    AND #&F             \  Won't hurt to make sure; we're changing stuff
+    TAX
+    INC cand_count, X   \  Count solved digit
+    INC cand_count      \  Count of "zeros" is count of solved digits
+    CLC                 \  C=0 => was already solved
+    RTS
+._cac_not_solved
+    LDA cands_89v, X
+    STA cand_copy+1
+    LDX #0              \  First pass will do nothing, but the saving in
+._cac_test_digit        \  cycles is hardly worth the extra bytes.
+    JSR asl_cand_copy   \  Now C=1 => candidate was allowed
     BCC _cac_not_allowed
-    INC cand_count, X
+    INC cand_count, X   \  Increase count of allowed digit
 ._cac_not_allowed
     INX
-    CPX #9
+    CPX #10
     BCC _cac_test_digit
-    RTS
-.asl_scr_ptr
-    ASL scr_ptr
-    ROL scr_ptr+1
+    RTS                 \  With C=1
+.asl_cand_copy
+    ASL cand_copy+1
+    ROL cand_copy
     RTS
     
 .clear_cand_counts
@@ -663,6 +717,20 @@ ORG &7000
     BPL _ccc_1
     RTS
 
+\  TEST WHETHER A CANDIDATE IS ALLOWED IN A CELL
+\  X => CELL TO TEST
+\  ON RETURN A=0 => NOT SOLVED
+\            A>0 => CELL VALUE
+
+.test_solved
+    TAY                 \  Save the candidate
+    LDA cands_17, X     \  Bit 7=1 => is solved
+    BMI _tsv_solved
+    LDA #0              \  Z=1; will cause BEQ to branch
+    RTS
+._tsv_solved
+    LDA cands_89v, X    \  Contains solved value
+    RTS
     
 .say
     PHP                 \  Stash everything on the 6502 stack
@@ -774,7 +842,8 @@ ORG &7800
     BRK
 .code_end
 
-grid            = see_table + 821
-cand_count      = grid + 162
+cands_17        = see_table + 821
+cands_89v       = cands_17 + 81
+cand_count      = cands_17 + 162
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
