@@ -21,9 +21,14 @@ var_pos         = &8B
 digit           = &8D
 cand_copy       = &8E
 
+\  BASIC VARIABLES
+
+bas_var_S       = &44C
+
 \  MOS ENTRY POINTS
 
 osasci          = &FFE3
+osnewl          = &FFE7
 oswrch          = &FFEE
 
 \  ERROR CODES
@@ -31,7 +36,7 @@ oswrch          = &FFEE
 E_NOT_ALLOWED   = 51
     
 
-ORG &7000
+ORG &6000
 
 .code_begin
 
@@ -57,7 +62,11 @@ ORG &7000
     JMP disp_contents
 .ext_get_see
     JMP get_see
-
+.ext_clr_seen
+    JMP clr_seen
+.ext_elim_out
+    JMP elim_out
+    
 \    .ext_write_digit
 \        JMP write_digit
 \    .ext_set_pmk
@@ -441,6 +450,19 @@ ORG &7000
     BCC _ss_row
     RTS
 
+.clr_seen
+    LDX #68
+    JSR get_pixel_pos   \  Now [scr_ptr] is set
+    LDX #14    
+.cs_char
+    LDA map_pos, X
+    TAY
+    LDA #32
+    STA (scr_ptr), Y
+    DEX
+    BPL cs_char
+    RTS
+
 \  RESET THE GRID TO COMPLETELY EMPTY
 \
 \  BIT PATTERN FOR EACH CELL IN THE GRID IS INITIALLY AS FOLLOWS;
@@ -488,10 +510,11 @@ ORG &7000
 .eliminate_candidate
     CLV                 \  V=0 => not naked single
     TAY                 \  Save the candidate
+    LDA cands_17, X
+    BMI _ec_never_set   \  Exit if already solved
     CPY #8
     BCS _ec_89
 ._ec_17
-    LDA cands_17, X
     AND bits_HL, Y
     BEQ _ec_never_set   \  Exit if candidate was never allowed
     LDA cands_17, X     \  Byte with candidates 1-7
@@ -550,8 +573,9 @@ ORG &7000
     \  DIGIT VALUE MUST BE IN preload
     LDA #&80
     STA cands_17, X     \  Set "solved" bit
-    LDA cands_89v, X
-    ORA preload
+    \LDA cands_89v, X
+    \ORA preload
+    LDA preload
     STA cands_89v, X    \  Store cell value
     LDY preload
     BIT _ctc_rts        \  This will set V=1 => cell now solved
@@ -636,14 +660,12 @@ ORG &7000
     PHA
     TYA
     PHA
-\    STX scr_ptr         \  Will be safe here for now
     TXA
     PHA
     LDA cands_17, X
     STA cand_copy
     LDA cands_89v, X
     STA cand_copy+1
-\    LDX scr_ptr
     JSR conv_xyX        \  Now X, Y hold co-ords
     BIT cand_copy       \  Bit 7 = 1 => solved
     BPL _dcc_pmark
@@ -683,10 +705,6 @@ ORG &7000
     LDA cands_17, X
     STA cand_copy       \  Make copy of allowed candidates
     BPL _cac_not_solved
-    LDA cands_89v, X    \  The value of the digit
-    AND #&F             \  Won't hurt to make sure; we're changing stuff
-    TAX
-    INC cand_count, X   \  Count solved digit
     INC cand_count      \  Count of "zeros" is count of solved digits
     CLC                 \  C=0 => was already solved
     RTS
@@ -732,6 +750,99 @@ ORG &7000
     LDA cands_89v, X    \  Contains solved value
     RTS
     
+\  ORIGINAL BASIC
+\
+\ 4600DEFPROCelim_out(I%,D%)
+\ 4610LOCALJ%,E%
+\ 4620FORJ%=0TO80
+\ 4630IFJ%=I%GOTO4680
+\ 4640IFFNsee(I%,J%)=0GOTO4680
+\ 4650IFFNsolved(J%)GOTO4680
+\ 4660E%=FNelim_cand(J%,D%)
+\ 4665IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
+\ 4670PROCdisp_cont(J%)
+\ 4680NEXT
+\ 4690ENDPROC
+
+\  ELIMINATE CANDIDATES FROM CELLS, WORKING OUTWARDS
+\  THIS IS SAFELY RE-ENTRANT, SO WE CAN CHASE UP NAKED SINGLES
+
+.elim_out
+    STA digit
+    LDA fix_pos         \  Save original positions on 6502 stack
+    PHA
+    LDA var_pos
+    PHA
+    STX fix_pos         \  Begin by displaying cell contents
+    JSR disp_contents
+    LDY #66             \  Show cells we see in bottom grid map
+    JSR show_seen
+    LDX #0
+    STX var_pos
+._elo_0
+    CPX fix_pos
+    BEQ _elo_no_elim
+    LDX fix_pos
+    LDY var_pos
+    JSR get_see
+    BEQ _elo_no_elim
+._elo_sees
+    LDX var_pos
+    LDA digit
+    JSR eliminate_candidate
+    BVC _elo_not_naked  \  Only do this if we have a naked single
+    LDX var_pos
+    JSR elim_out
+    LDX fix_pos         \  Restore sight map
+    LDY #66             \  Bottom grid
+    JSR clr_seen
+    LDA #0
+    CLC
+._elo_not_naked
+    BMI _elo_display    \  Display contents if cell is solved
+    BCS _elo_no_elim    \  Skip if nothing was eliminated
+
+\ 4665IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
+
+    PHA                 \  Store count of remaining candidates
+    LDX fix_pos
+    LDA cands_89v, X
+    \LDA digit
+    \CLC
+    ADC #48             \  We know C=0 here, because BCS did not branch
+    JSR oswrch
+    JSR say
+    EQUS " in "
+    BRK
+    LDX fix_pos
+    JSR disp_pos
+    JSR say
+    EQUS " sees "
+    BRK
+    LDX var_pos
+    JSR disp_pos
+    JSR osnewl
+    PLA
+
+    LDX var_pos
+    CMP bas_var_S       \  Don't make too many pencil marks
+    BCS _elo_no_elim
+._elo_display
+    JSR disp_contents
+._elo_no_elim
+    INC var_pos
+    LDX var_pos
+    CPX #81
+    BCC _elo_0
+    LDY #66             \  Bottom grid
+    JSR clr_seen
+    PLA                 \  Retrieve original positions
+    STA var_pos
+    PLA
+    STA fix_pos
+    RTS
+
+
 .say
     PHP                 \  Stash everything on the 6502 stack
     PHA
@@ -790,6 +901,8 @@ ALIGN &100
     EQUD &2A206B27
     EQUD &2E2D7B77
     EQUD &2E2C7B77
+    \  digit "10" is underscore for cursor
+    EQUD &70702020
 
 \  PENCIL MARK PATTERNS
 \
@@ -808,6 +921,8 @@ ALIGN &100
     EQUW &0000:EQUD &00040000
     EQUW &0000:EQUD &04000000
 
+\  X, Y CO-ORDINATES FOR GRID POSITIONS
+\
 \  HIGH NYBBLE = Y CO-ORDINATE
 \  LOW NYBBLE  = X CO-ORDINATE
 
@@ -835,6 +950,17 @@ ALIGN &100
 
 .bits_HL
     EQUD &10204080:EQUD &01020408
+    
+.map_pos
+    EQUB 84:EQUB 83:EQUB 82:EQUB 81:EQUB 80
+    EQUB 44:EQUB 43:EQUB 42:EQUB 41:EQUB 40
+    EQUB 4:EQUB 3:EQUB 2:EQUB 1:EQUB 0
+    
+ORG &7680
+
+.group_map
+    BRK
+
 ORG &7800
 
 .see_table
