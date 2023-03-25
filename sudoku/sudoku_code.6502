@@ -2,6 +2,8 @@ scr_ptr         = &70
 see_ptr         = &72
 text_ptr        = &74
 
+set_ptr         = &76
+
 remainder       = &81
 divisor         = &82
 quotient        = &80
@@ -66,6 +68,20 @@ ORG &6000
     JMP clr_seen
 .ext_elim_out
     JMP elim_out
+.ext_reset_tally
+    JMP reset_tally
+.ext_update_tally
+    JMP update_tally
+.ext_show_instances
+    JMP show_instances
+.ext_get_set_cell
+    JMP get_set_cell
+.ext_set_set_cell
+    JMP set_set_cell
+.ext_clr_set_cell
+    JMP clr_set_cell
+.ext_show_set
+    JMP show_set
     
 \    .ext_write_digit
 \        JMP write_digit
@@ -492,6 +508,7 @@ ORG &6000
 
 .test_candidate
     TAY                 \  Candidate for which we are testing
+.test_cand_Y
     CPY #8              \  See which byte candidate belongs to
     BCS _tc_89
 ._tc_17
@@ -701,32 +718,7 @@ ORG &6000
     PLA
     RTS
 
-.count_all_cands
-    LDA cands_17, X
-    STA cand_copy       \  Make copy of allowed candidates
-    BPL _cac_not_solved
-    INC cand_count      \  Count of "zeros" is count of solved digits
-    CLC                 \  C=0 => was already solved
-    RTS
-._cac_not_solved
-    LDA cands_89v, X
-    STA cand_copy+1
-    LDX #0              \  First pass will do nothing, but the saving in
-._cac_test_digit        \  cycles is hardly worth the extra bytes.
-    JSR asl_cand_copy   \  Now C=1 => candidate was allowed
-    BCC _cac_not_allowed
-    INC cand_count, X   \  Increase count of allowed digit
-._cac_not_allowed
-    INX
-    CPX #10
-    BCC _cac_test_digit
-    RTS                 \  With C=1
-.asl_cand_copy
-    ASL cand_copy+1
-    ROL cand_copy
-    RTS
-    
-.clear_cand_counts
+.reset_tally
     LDX #9
     LDA #0
 ._ccc_1
@@ -735,6 +727,31 @@ ORG &6000
     BPL _ccc_1
     RTS
 
+.update_tally
+    LDA cands_17, X
+    STA cand_copy       \  Make copy of allowed candidates
+    BPL _udt_not_solved
+    INC cand_count      \  Count of "zeros" is count of solved digits
+    CLC                 \  C=0 => was already solved
+    RTS
+._udt_not_solved
+    LDA cands_89v, X
+    STA cand_copy+1
+    LDX #0              \  First pass will do nothing, but the saving in
+._udt_test_digit        \  cycles is hardly worth the extra bytes.
+    JSR asl_cand_copy   \  Now C=1 => candidate was allowed
+    BCC _udt_not_allowed
+    INC cand_count, X   \  Increase count of allowed digit
+._udt_not_allowed
+    INX
+    CPX #10
+    BCC _udt_test_digit
+    RTS                 \  With C=1
+.asl_cand_copy
+    ASL cand_copy+1
+    ROL cand_copy
+    RTS
+    
 \  TEST WHETHER A CANDIDATE IS ALLOWED IN A CELL
 \  X => CELL TO TEST
 \  ON RETURN A=0 => NOT SOLVED
@@ -842,7 +859,116 @@ ORG &6000
     STA fix_pos
     RTS
 
+\  SHOW ALL INSTANCES OF A CANDIDATE
 
+.show_instances
+    STX digit
+    STY pixelY
+    LDA #0
+    STA var_pos
+._shi_row
+    LDA #68
+    STA pixelX
+._shi_col
+    LDX var_pos
+    JSR test_solved
+    BNE _shi_0
+    LDY digit
+    JSR test_cand_Y
+    BEQ _shi_0
+    LDX pixelX
+    LDY pixelY
+    JSR set_pixel
+    BNE _shi_next       \  Will always branch
+._shi_0
+    LDX pixelX
+    LDY pixelY
+    JSR clr_pixel
+._shi_next
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #77
+    BCC _shi_col
+    INC pixelY
+    LDA var_pos
+    CMP #81
+    BCC _shi_row
+    RTS
+
+\  CONVERT A BIT OFFSET IN Y, TO A BYTE OFFSET IN Y AND A SUB-OFFSET
+\  TO A BIT WITHIN THAT BYTE IN X
+    
+.calc_set_ofs
+    TYA                 \  Copy Y to accumulator
+    TAX                 \  Also make a copy in X
+    LSR A               \  Divide by 8 ...
+    LSR A
+    LSR A
+    TAY                 \  ... and store in Y
+    TXA                 \  Retrieve copy
+    AND #7              \  Get remainder modulo 8 ...
+    TAX                 \  ... and store in X
+    RTS
+    
+.get_set_cell
+    JSR calc_set_ofs
+    LDA (set_ptr), Y
+    AND bits_HL, X      \  Z=0 => bit was 1
+    RTS
+
+.set_set_cell
+    JSR calc_set_ofs
+    LDA (set_ptr), Y
+    ORA bits_HL, X
+    STA (set_ptr), Y
+    RTS
+
+.clr_set_cell
+    JSR calc_set_ofs
+    LDA (set_ptr), Y
+    ORA bits_HL, X      \  force it to 1 ...
+    EOR bits_HL, X      \  ... then invert it
+    STA (set_ptr), Y
+    RTS
+
+\  SHOW THE IN/OUT STATUS OF A SET OF GRID SQUARES
+\  ON ENTRY Y = VERTICAL POSITION
+\           set-ptr,set_ptr+1 => SET TO DISPLAY
+
+.show_set
+    STY pixelY
+    LDA #0
+    STA var_pos
+._shs_row
+    LDA #68
+    STA pixelX
+._shs_col
+    LDY var_pos
+    JSR get_set_cell
+    PHP                 \  Save Z flag for later
+    LDX pixelX
+    LDY pixelY
+    PLP                 \  Retrieve Z flag
+    BEQ _shs_0
+    JSR set_pixel
+    BNE _shs_next       \  Will always branch
+._shs_0
+    JSR clr_pixel
+._shs_next
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #77
+    BCC _shs_col
+    INC pixelY
+    LDA var_pos
+    CMP #81
+    BCC _shs_row
+    RTS
+
+
+    
 .say
     PHP                 \  Stash everything on the 6502 stack
     PHA
@@ -973,3 +1099,9 @@ cands_89v       = cands_17 + 81
 cand_count      = cands_17 + 162
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
+
+PRINT "group_map=",~group_map
+PRINT "see_table=",~see_table
+PRINT "cands_17=",~cands_17
+PRINT "cands_89v=",~cands_89v
+PRINT "cand_count=",~cand_count
