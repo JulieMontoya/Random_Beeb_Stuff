@@ -82,6 +82,14 @@ ORG &6000
     JMP clr_set_cell
 .ext_show_set
     JMP show_set
+.ext_tally_set
+    JMP tally_set
+.ext_fill_set
+    JMP fill_set
+.ext_elim_in
+    JMP elim_in
+.ext_elim_set
+    JMP elim_set
     
 \    .ext_write_digit
 \        JMP write_digit
@@ -541,6 +549,9 @@ ORG &6000
     JMP _ec_done
 ._ec_89
     LDA cands_89v, X    \  Byte with candidates 8-9
+    AND bits_HL-8, Y
+    BEQ _ec_never_set
+    LDA cands_89v, X    \  Byte with candidates 8-9
     ORA bits_HL-8, Y
     EOR bits_HL-8, Y
     STA cands_89v, X
@@ -679,6 +690,8 @@ ORG &6000
     PHA
     TXA
     PHA
+    LDA digit
+    PHA
     LDA cands_17, X
     STA cand_copy
     LDA cands_89v, X
@@ -711,6 +724,8 @@ ORG &6000
     CMP #10
     BCC _dcc_test       \  Test next candidate
 ._dcc_end
+    PLA
+    STA digit
     PLA
     TAX
     PLA
@@ -767,66 +782,102 @@ ORG &6000
     LDA cands_89v, X    \  Contains solved value
     RTS
     
+\  ELIMINATE CANDIDATES FROM CELLS, WORKING OUTWARDS
+\  THIS IS not SAFELY RE-ENTRANT, SO WE CAN't CHASE UP NAKED SINGLES
+
 \  ORIGINAL BASIC
 \
-\ 4600DEFPROCelim_out(I%,D%)
-\ 4610LOCALJ%,E%
-\ 4620FORJ%=0TO80
-\ 4630IFJ%=I%GOTO4680
-\ 4640IFFNsee(I%,J%)=0GOTO4680
-\ 4650IFFNsolved(J%)GOTO4680
-\ 4660E%=FNelim_cand(J%,D%)
-\ 4665IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
-\ 4670PROCdisp_cont(J%)
-\ 4680NEXT
-\ 4690ENDPROC
-
-\  ELIMINATE CANDIDATES FROM CELLS, WORKING OUTWARDS
-\  THIS IS SAFELY RE-ENTRANT, SO WE CAN CHASE UP NAKED SINGLES
-
+\ 5100DEFPROCman_elim_out(I%,D%)
+\ 5110LOCALJ%,E%
+\ 5112PRINT"Showing contents of ";:PROCdisp_pos(I%):PRINT
+\ 5114PROCdisp_cont(I%)
+\ 5120FORJ%=0TO80
+\ 5130IFJ%=I%GOTO5190
+\ 5140IFFNsee(I%,J%)=0GOTO5190
+\ 5150IFFNsolved(J%)GOTO5190
+\ 5160E%=FNelim_cand(J%,D%)
+\ 5170IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
+\ 5180PROCdisp_cont(J%)
+\ 5190NEXT
+\ 5200ENDPROC
+    
 .elim_out
+
+\ 5100DEFPROCman_elim_out(I%,D%)
+\ 5110LOCALJ%,E%
+
     STA digit
-    LDA fix_pos         \  Save original positions on 6502 stack
+    LDA fix_pos
     PHA
     LDA var_pos
     PHA
-    STX fix_pos         \  Begin by displaying cell contents
-    JSR disp_contents
-    LDY #66             \  Show cells we see in bottom grid map
+
+\ 5112PRINT"Showing contents of ";:PROCdisp_pos(I%):PRINT
+\ 5114PROCdisp_cont(I%)
+
+    STX fix_pos
+    LDY #66
     JSR show_seen
+    LDX fix_pos
+    JSR disp_contents
+
+\ 5120FORJ%=0TO80
+
     LDX #0
     STX var_pos
-._elo_0
+._neo_test
+
+\ 5130IFJ%=I%GOTO5190
+
     CPX fix_pos
-    BEQ _elo_no_elim
-    LDX fix_pos
-    LDY var_pos
+    BEQ _neo_no_elim    \  No elimination from same cell
+    
+\ 5140IFFNsee(I%,J%)=0GOTO5190
+
+    LDY fix_pos
     JSR get_see
-    BEQ _elo_no_elim
-._elo_sees
+    BEQ _neo_no_elim    \  No elimination if does not see
+
+\ 5150IFFNsolved(J%)GOTO5190
+\ 5160E%=FNelim_cand(J%,D%)
+
     LDX var_pos
     LDA digit
     JSR eliminate_candidate
-    BVC _elo_not_naked  \  Only do this if we have a naked single
-    LDX var_pos
-    JSR elim_out
-    LDX fix_pos         \  Restore sight map
-    LDY #66             \  Bottom grid
-    JSR clr_seen
-    LDA #0
-    CLC
-._elo_not_naked
-    BMI _elo_display    \  Display contents if cell is solved
-    BCS _elo_no_elim    \  Skip if nothing was eliminated
+    
+    BCS _neo_no_elim    \  No elimination if never allowed
 
-\ 4665IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
+    BVC _neo_not_naked
+\    TYA
+\    ORA #&30
+\    PHA
+\    
+\    JSR say
+\    EQUS "Nkd Sgl "
+\    BRK
+\    LDX var_pos
+\    JSR disp_pos
+\    LDA#61
+\    JSR oswrch
+\    
+\    PLA
+\    JSR oswrch
+\    JSR osnewl
+\    
+\    CLC
+\    
+    BRK
+    EQUB 56
+    EQUS "Naked single"
+    BRK
+    
+\ 5170IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
 
-    PHA                 \  Store count of remaining candidates
+._neo_not_naked
+    \LDA digit
     LDX fix_pos
     LDA cands_89v, X
-    \LDA digit
-    \CLC
-    ADC #48             \  We know C=0 here, because BCS did not branch
+    ADC #48             \  We know C=0 here
     JSR oswrch
     JSR say
     EQUS " in "
@@ -839,25 +890,117 @@ ORG &6000
     LDX var_pos
     JSR disp_pos
     JSR osnewl
-    PLA
+
+\ 5180PROCdisp_cont(J%)
 
     LDX var_pos
-    CMP bas_var_S       \  Don't make too many pencil marks
-    BCS _elo_no_elim
-._elo_display
     JSR disp_contents
-._elo_no_elim
+
+\ 5190NEXT
+
+._neo_no_elim
     INC var_pos
     LDX var_pos
     CPX #81
-    BCC _elo_0
-    LDY #66             \  Bottom grid
-    JSR clr_seen
-    PLA                 \  Retrieve original positions
+    BCC _neo_test
+
+\ 5200ENDPROC
+
+    PLA
     STA var_pos
     PLA
     STA fix_pos
     RTS
+    
+\  ELIMINATE CANDIDATES FROM A CELL, WORKING INWARDS
+
+    
+.elim_in
+    LDA fix_pos         \  Save fixed and variable positions
+    PHA                 \  (which we are going to stomp on)
+    LDA var_pos
+    PHA
+
+    STX fix_pos
+    LDY #66
+    JSR show_seen
+    LDX #0
+    STX var_pos
+    
+._nei_test
+    CPX fix_pos         \  Skip if same position
+    BEQ _nei_no_elim
+    LDY fix_pos
+    JSR get_see
+    BEQ _nei_no_elim    \  No elimination if does not see
+    LDX var_pos
+    JSR test_solved     \  See if digit is solved
+    BEQ _nei_no_elim
+    
+    STA digit           \  Remember digit for later
+    LDX fix_pos
+    JSR eliminate_candidate
+    BCS _nei_no_elim
+    JSR _nei_elim       \  Display message about elimination
+    
+    LDX var_pos
+    BVC _nei_not_naked
+    
+    JSR say
+    EQUS "Naked single"
+    BRK
+    
+    LDA #80             \  Jump to end of grid
+    STA var_pos
+    
+._nei_not_naked
+    LDX fix_pos
+    JSR disp_contents
+    
+._nei_no_elim
+    INC var_pos
+    LDX var_pos
+    CPX #81
+    BCC _nei_test
+    
+    PLA                 \  Restore the previous positions
+    STA var_pos
+    PLA
+    STA fix_pos
+    RTS
+    
+._nei_elim
+    PHP
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+    
+    LDX fix_pos         \  Display fixed position
+    JSR disp_pos
+    JSR say
+    EQUS " sees "
+    BRK
+    LDA digit           \  Display digit in seen cell
+    ORA #&30
+    JSR oswrch
+    JSR say
+    EQUS " in "
+    BRK
+    LDX var_pos         \  Display variable position
+    JSR disp_pos
+    JSR osnewl
+    
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    PLP
+    RTS
+    
+
 
 \  SHOW ALL INSTANCES OF A CANDIDATE
 
@@ -967,6 +1110,94 @@ ORG &6000
     BCC _shs_row
     RTS
 
+\  TALLY UP THE POSSIBLE CANDIDATES FOR THE CELLS IN A SET
+\  ON RETURN; cand_count     => SOLVED CELLS
+\             cand_count + 1 => POSSIBLE 1S
+\             cand_count + 2 => POSSIBLE 2S
+\               ...
+\             cand_count + 9 => POSSIBLE 9S
+\  SOLVED CELLS DO NOT COUNT TOWARDS CANDIDATE COUNTS!
+\  IF A DIGIT CAN GO IN ONLY ONE CELL, WE NEED TO PUT
+\  IT THERE!
+
+.tally_set
+    JSR reset_tally     \  This will leave 0 in A
+    STA var_pos
+._tys_pos
+    LDY var_pos
+    JSR get_set_cell    \  See if cell is in set
+    BEQ _tys_not_in     \  Skip if not in set
+    LDX var_pos
+    JSR update_tally
+._tys_not_in
+    INC var_pos
+    LDA var_pos
+    CMP #81
+    BCC _tys_pos
+    RTS
+
+.fill_set
+    STA digit
+    LDA #0
+    STA var_pos
+._fis_pos
+    LDX var_pos
+    JSR get_set_cell    \  See if cell is in set
+    BEQ _fis_not_in     \  Skip if not in set
+    LDX var_pos
+    LDA digit
+    JSR test_candidate
+    BEQ _fis_not_in
+
+    LDA digit
+    CLC
+    ADC #48
+    JSR oswrch
+    JSR say
+    EQUS " can only go in "
+    BRK
+    LDX var_pos
+    JSR disp_pos
+    LDA #46
+    JSR oswrch
+    JSR osnewl
+    
+    LDA digit
+    LDX var_pos
+    JSR set_digit
+    JSR disp_contents
+    JSR elim_out
+._fis_not_in
+    INC var_pos
+    LDA var_pos
+    CMP #81
+    BCC _fis_pos
+    RTS
+
+.elim_set
+    LDA #0
+    STA var_pos
+._els_pos
+    LDY var_pos
+    JSR get_set_cell    \  See if cell is in set
+    BEQ _els_not_in     \  Skip if not in set
+    
+    LDX var_pos
+    JSR test_solved
+    BEQ _els_not_solved
+.els_solved
+    LDA digit
+    JSR elim_out        \  Eliminate candidates it sees
+    JMP _els_not_in
+._els_not_solved
+    JSR elim_in         \  Eliminate anything seen as candidate
+    LDX var_pos
+._els_not_in
+    INC var_pos
+    LDX var_pos
+    CPX #81
+    BCC _els_pos
+    RTS
 
     
 .say
