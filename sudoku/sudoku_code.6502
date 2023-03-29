@@ -90,6 +90,8 @@ ORG &6000
     JMP elim_in
 .ext_elim_set
     JMP elim_set
+.ext_dump_grid
+    JMP dump_grid
     
 \    .ext_write_digit
 \        JMP write_digit
@@ -1238,6 +1240,37 @@ ORG &6000
     PLP
     RTS                 \  To the modified address
 
+    
+.dump_grid
+    LDA #42
+    JSR oswrch
+.dump_grid1
+    LDX #0
+._dpg_0
+    LDA cands_17, X
+    JSR disp_hex_byte
+    LDA cands_89v, X
+    JSR disp_hex_byte
+    INX
+    CPX #81
+    BCC _dpg_0
+    JMP osnewl
+    
+.disp_hex_byte
+    PHA
+    JSR lsra4
+    JSR disp_hex_nybble
+    PLA
+    AND #&F
+.disp_hex_nybble
+    ORA #&30
+    CMP #&3A
+    BCC _dhn_09
+    ADC #6              \  We know C=1 here, because BCS did not branch
+._dhn_09
+    JMP oswrch
+    
+    
     
 ALIGN &100
 
