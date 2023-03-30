@@ -843,9 +843,15 @@ ORG &6000
 \ 5150IFFNsolved(J%)GOTO5190
 \ 5160E%=FNelim_cand(J%,D%)
 
+    LDX fix_pos
+    \LDA digit
+    LDA cands_89v, X
     LDX var_pos
-    LDA digit
     JSR eliminate_candidate
+    \PHP
+    \LDX var_pos
+    \JSR disp_contents
+    \PLP    
     
     BCS _neo_no_elim    \  No elimination if never allowed
 
@@ -1140,12 +1146,27 @@ ORG &6000
 
 .fill_set
     STA digit
-    LDA #0
-    STA var_pos
+    LDX #0
+    STX var_pos
 ._fis_pos
-    LDX var_pos
+    LDY var_pos
     JSR get_set_cell    \  See if cell is in set
+    PHP
+    LDX var_pos
+    JSR disp_pos
+    PLP
+    PHP
+    BEQ _fis_dbg_0
+.fis_dbg_1
+    LDA #121 \ y
+    BNE _fis_dbg_any
+._fis_dbg_0
+    LDA #110 \ n
+._fis_dbg_any
+    JSR oswrch
+    PLP
     BEQ _fis_not_in     \  Skip if not in set
+    
     LDX var_pos
     LDA digit
     JSR test_candidate
@@ -1171,8 +1192,8 @@ ORG &6000
     JSR elim_out
 ._fis_not_in
     INC var_pos
-    LDA var_pos
-    CMP #81
+    LDX var_pos
+    CPX #81
     BCC _fis_pos
     RTS
 
@@ -1188,7 +1209,9 @@ ORG &6000
     JSR test_solved
     BEQ _els_not_solved
 .els_solved
-    LDA digit
+    \LDA digit
+    LDX fix_pos
+    LDA cands_89v, X
     JSR elim_out        \  Eliminate candidates it sees
     JMP _els_not_in
 ._els_not_solved
