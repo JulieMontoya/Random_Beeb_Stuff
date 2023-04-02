@@ -19,7 +19,7 @@ pixelX          = &88
 pixelY          = &89
 fix_pos         = &8A
 var_pos         = &8B
-
+solved          = &8C
 digit           = &8D
 cand_copy       = &8E
 
@@ -36,7 +36,11 @@ oswrch          = &FFEE
 \  ERROR CODES
 
 E_NOT_ALLOWED   = 51
-    
+
+\  SEEMS TO BE WORKING NOW
+\  WILL COMMENT OUT DEBUGGING CODE FOR NOW RATHER THAN REMOVE IT ALTOGETHER
+\  JUST IN CASE .....
+
 
 ORG &6000
 
@@ -502,11 +506,12 @@ ORG &6000
 
 .reset_grid
     LDX #0
+    STX solved          \  No digits solved to begin with
 ._rsg_0
     LDA #&7F
-    STA cands_17, X
+    STA cands_17, X     \  01111111 => Not solved, can be 1-7
     LDA #&C0
-    STA cands_89v, X
+    STA cands_89v, X    \  11000000 => Can be 8-9
     INX
     CPX #81
     BCC _rsg_0
@@ -537,6 +542,16 @@ ORG &6000
 .eliminate_candidate
     CLV                 \  V=0 => not naked single
     TAY                 \  Save the candidate
+\    LDA #33             \  "!"
+\    JSR oswrch
+\    TXA
+\    PHA
+\    TYA
+\    JSR disp_digit      \  Digit being eliminated
+\    PLA
+\    TAX
+\    JSR disp_hex_cands  \  Hex rep of destination and candidates
+\    JSR osnewl
     LDA cands_17, X
     BMI _ec_never_set   \  Exit if already solved
     CPY #8
@@ -547,7 +562,7 @@ ORG &6000
     LDA cands_17, X     \  Byte with candidates 1-7
     ORA bits_HL, Y
     EOR bits_HL, Y
-    STA cands_17, X
+    STA cands_17, X     \  Store new candidates
     JMP _ec_done
 ._ec_89
     LDA cands_89v, X    \  Byte with candidates 8-9
@@ -556,8 +571,24 @@ ORG &6000
     LDA cands_89v, X    \  Byte with candidates 8-9
     ORA bits_HL-8, Y
     EOR bits_HL-8, Y
-    STA cands_89v, X
+    STA cands_89v, X    \  Store new candidates
 ._ec_done
+
+    TXA
+    PHA
+    TAX
+    JSR disp_pos
+    JSR say
+    EQUS " cannot be "
+    BRK
+    TYA
+    JSR disp_digit
+    LDA #46             \  "."
+    JSR oswrch
+    JSR osnewl
+    PLA
+    TAX
+    
     CLV                 \  V=0 => not naked single
     CLC                 \  C=0 => candidate successfully eliminated
     
@@ -565,37 +596,15 @@ ORG &6000
     \  IF ONLY ONE REMAINS -- CONSIDER CELL SOLVED
     
 ._ec_count_cands
-    LDA #0
-    STA multiplier      \  Use this to count allowed digits
-    STA preload         \  This is initially 0
-    LDA #&40
-    STA multiplier+1    \  Use this to hold bit mask
-    LDY #1              \  Digit we are testing for
-._ctc_b1
-    LDA cands_17, X     \  Byte with candidates 1-7
-    BIT multiplier+1
-    BEQ _ctc_b1_0
-    INC multiplier
-    STY preload         \  Keep track of highest allowed candidate
-._ctc_b1_0
-    INY                 \  
-    LSR multiplier+1
-    BCC _ctc_b1         \  Keep going until 1 shifts out
-    
-    \  Now we need to test for candidates 8 and 9
-    
-    LDA cands_89v, X
-    BPL _ctc_b2_0x      \  Test bit 7 => 8 allowed
-    INC multiplier
-    STY preload
-._ctc_b2_0x
-    INY
-    BIT bits_HL+1       \  Test bit 6 => 9 allowed
-    BEQ _ctc_b2_x0
-    INC multiplier
-    STY preload
-._ctc_b2_x0
-    LDA multiplier
+    \TXA
+    \PHA
+    \JSR disp_pos
+    \JSR say
+    \EQUS " can be:"
+    \BRK
+    \PLA
+    \TAX
+    JSR count_cands
     CMP #1
     BNE _ctc_not_naked
 ._ctc_naked
@@ -603,10 +612,20 @@ ORG &6000
     \  DIGIT VALUE MUST BE IN preload
     LDA #&80
     STA cands_17, X     \  Set "solved" bit
-    \LDA cands_89v, X
-    \ORA preload
     LDA preload
     STA cands_89v, X    \  Store cell value
+    INC solved          \  Increase solved count
+    LDA digit
+    PHA
+    TXA
+    PHA
+    LDA cands_89v, X
+    JSR elim_out
+    PLA
+    TAX
+    PLA
+    STA digit
+    
     LDY preload
     BIT _ctc_rts        \  This will set V=1 => cell now solved
     RTS
@@ -618,6 +637,43 @@ ORG &6000
     
 ._ec_never_set
     SEC                 \  C=1 => candidate was never allowed
+    RTS
+    
+    
+.count_cands
+    JSR copy_cands
+    LDA #0
+    STA multiplier      \  Use this to count allowed digits
+    STA preload         \  This is initially 0
+    LDY #1              \  Digit we are testing for
+    JSR asl_cand_copy   \  Skip "solved" bit
+._ncc_digit
+    JSR asl_cand_copy
+    BCC _ncc_not_allowed
+    INC multiplier      \  Increase count of digits allowed
+    STY preload         \  Update highest allowed digit
+    \TYA
+    \JSR disp_digit
+._ncc_not_allowed
+    INY
+    CPY #10
+    BCC _ncc_digit
+    \LDA #46
+    \JSR oswrch
+    \LDA multiplier      \  Return count of candidates allowed
+    \JSR disp_digit_sp
+    \JSR say
+    \EQUS "left."
+    \BRK
+    \JSR osnewl
+    LDA multiplier      \  Return count of candidates allowed    
+    RTS
+    
+.copy_cands
+    LDA cands_17, X
+    STA cand_copy
+    LDA cands_89v, X
+    STA cand_copy+1
     RTS
 
 \  SET A DIGIT TO A DEFINITE VALUE
@@ -631,9 +687,10 @@ ORG &6000
     BRK
 ._sd_1
     LDA #&80
-    STA cands_17, X
+    STA cands_17, X     \  Bit 7=1 => cell is solved
     TYA
-    STA cands_89v, X
+    STA cands_89v, X    \  Solved digit value
+    INC solved
     RTS
 
 .conv_xy
@@ -686,6 +743,65 @@ ORG &6000
     PLA
     RTS
 
+.disp_pos_ext
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+    
+    JSR conv_xyX
+    LDA #&52            \  "R"
+    JSR oswrch
+    TYA
+    SEC                 \  display row number starting from 1
+    ADC #&30            \  ASCII code for 0
+    JSR oswrch
+    LDA #&43            \  "C"
+    JSR oswrch
+    TXA
+    SEC                 \  display column number starting from 1
+    ADC #&30
+    JSR oswrch
+    LDA #61             \  =
+    JSR oswrch
+    
+    TSX
+    LDA &101, X         \  This will give X we pushed
+    TAX
+    
+    LDA cand_copy       \  Save the copy of the candidates ...
+    PHA
+    LDA cand_copy+1
+    PHA
+    
+    JSR copy_cands      \  ... which will get trashed
+    LDY #1              \  Digit we are testing for
+    JSR asl_cand_copy   \  Skip "solved" bit
+._dpe_digit    
+    JSR asl_cand_copy
+    BCC _dpe_not_allowed
+    TYA
+    JSR disp_digit
+._dpe_not_allowed
+    INY
+    CPY #9
+    BCC _dpe_digit
+    LDA #46
+    JSR oswrch
+
+    PLA                 \  Restore copy of candidates
+    STA cand_copy+1
+    PLA
+    STA cand_copy
+
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    RTS
+
 .disp_contents
     PHA
     TYA
@@ -694,10 +810,11 @@ ORG &6000
     PHA
     LDA digit
     PHA
-    LDA cands_17, X
-    STA cand_copy
-    LDA cands_89v, X
-    STA cand_copy+1
+    JSR copy_cands
+    \LDA cands_17, X
+    \STA cand_copy
+    \LDA cands_89v, X
+    \STA cand_copy+1
     JSR conv_xyX        \  Now X, Y hold co-ords
     BIT cand_copy       \  Bit 7 = 1 => solved
     BPL _dcc_pmark
@@ -822,6 +939,19 @@ ORG &6000
     JSR show_seen
     LDX fix_pos
     JSR disp_contents
+    
+    \JSR say
+    \EQUS "Working out from "
+    \BRK
+    \LDA digit
+    \JSR disp_digit_sp
+    \JSR say
+    \EQUS "in "
+    \BRK
+    \LDX fix_pos
+    \JSR disp_pos
+    \LDA #58             \ ":"
+    \JSR osnewl
 
 \ 5120FORJ%=0TO80
 
@@ -844,36 +974,18 @@ ORG &6000
 \ 5160E%=FNelim_cand(J%,D%)
 
     LDX fix_pos
-    \LDA digit
-    LDA cands_89v, X
-    LDX var_pos
+    LDA cands_89v, X    \  The digit in the fixed position ...
+    LDX var_pos         \  ... gets eliminated from the variable position
     JSR eliminate_candidate
-    \PHP
-    \LDX var_pos
-    \JSR disp_contents
-    \PLP    
     
     BCS _neo_no_elim    \  No elimination if never allowed
+    BCS _neo_miss       \  No elimination if never allowed
 
+._neo_hit
     BVC _neo_not_naked
-\    TYA
-\    ORA #&30
-\    PHA
-\    
-\    JSR say
-\    EQUS "Nkd Sgl "
-\    BRK
-\    LDX var_pos
-\    JSR disp_pos
-\    LDA#61
-\    JSR oswrch
-\    
-\    PLA
-\    JSR oswrch
-\    JSR osnewl
-\    
-\    CLC
-\    
+    BVS _neo_not_naked
+
+.neo_naked_error
     BRK
     EQUB 56
     EQUS "Naked single"
@@ -882,22 +994,22 @@ ORG &6000
 \ 5170IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
 
 ._neo_not_naked
-    \LDA digit
-    LDX fix_pos
-    LDA cands_89v, X
-    ADC #48             \  We know C=0 here
-    JSR oswrch
-    JSR say
-    EQUS " in "
-    BRK
-    LDX fix_pos
-    JSR disp_pos
-    JSR say
-    EQUS " sees "
-    BRK
-    LDX var_pos
-    JSR disp_pos
-    JSR osnewl
+    \LDX fix_pos
+    \LDA cands_89v, X
+    \ADC #48             \  We know C=0 here
+    \JSR oswrch
+    \JSR say
+    \EQUS " in "
+    \BRK
+    \LDX fix_pos
+    \JSR disp_pos
+    \JSR say
+    \EQUS " sees "
+    \BRK
+    \LDX var_pos
+    \\JSR disp_pos_ext
+    \JSR disp_pos
+    \JSR osnewl
 
 \ 5180PROCdisp_cont(J%)
 
@@ -912,6 +1024,20 @@ ORG &6000
     CPX #81
     BCC _neo_test
 
+    \JSR say
+    \EQUS "Done out from "
+    \BRK
+    \LDA digit
+    \JSR disp_digit_sp
+    \JSR say
+    \EQUS "in "
+    \BRK
+    \LDX fix_pos
+    \JSR disp_pos
+    \LDA #33             \ "!"
+    \JSR oswrch
+    \JSR osnewl
+    
 \ 5200ENDPROC
 
     PLA
@@ -920,6 +1046,24 @@ ORG &6000
     STA fix_pos
     RTS
     
+._neo_miss
+    LDX fix_pos
+    LDA cands_89v, X
+    ADC #47             \  We know C=1 here
+    JSR oswrch
+    JSR say
+    EQUS " in "
+    BRK
+    LDX fix_pos
+    JSR disp_pos
+    JSR say
+    EQUS " misses "
+    BRK
+    LDX var_pos
+    JSR disp_pos
+    JSR osnewl
+    JMP _neo_no_elim
+
 \  ELIMINATE CANDIDATES FROM A CELL, WORKING INWARDS
 
     
@@ -932,6 +1076,15 @@ ORG &6000
     STX fix_pos
     LDY #66
     JSR show_seen
+
+    \JSR say
+    \EQUS "Working into "
+    \BRK
+    \LDX fix_pos
+    \JSR disp_pos
+    \LDA #58             \ :
+    \JSR osnewl
+
     LDX #0
     STX var_pos
     
@@ -991,10 +1144,11 @@ ORG &6000
     EQUS " sees "
     BRK
     LDA digit           \  Display digit in seen cell
-    ORA #&30
-    JSR oswrch
+    \ORA #&30
+    \JSR oswrch
+    JSR disp_digit_sp
     JSR say
-    EQUS " in "
+    EQUS "in "
     BRK
     LDX var_pos         \  Display variable position
     JSR disp_pos
@@ -1151,20 +1305,7 @@ ORG &6000
 ._fis_pos
     LDY var_pos
     JSR get_set_cell    \  See if cell is in set
-    PHP
-    LDX var_pos
-    JSR disp_pos
-    PLP
-    PHP
-    BEQ _fis_dbg_0
-.fis_dbg_1
-    LDA #121 \ y
-    BNE _fis_dbg_any
-._fis_dbg_0
-    LDA #110 \ n
-._fis_dbg_any
-    JSR oswrch
-    PLP
+    \JSR _fis_dbg
     BEQ _fis_not_in     \  Skip if not in set
     
     LDX var_pos
@@ -1189,12 +1330,31 @@ ORG &6000
     LDX var_pos
     JSR set_digit
     JSR disp_contents
+    LDA digit
+    LDX var_pos
     JSR elim_out
 ._fis_not_in
     INC var_pos
     LDX var_pos
     CPX #81
     BCC _fis_pos
+    RTS
+    
+._fis_dbg
+    PHP
+    LDX var_pos
+    JSR disp_pos
+    PLP
+    PHP
+    BEQ _fis_dbg_0
+.fis_dbg_1
+    LDA #121 \ y
+    BNE _fis_dbg_any
+._fis_dbg_0
+    LDA #110 \ n
+._fis_dbg_any
+    JSR oswrch
+    PLP
     RTS
 
 .elim_set
@@ -1210,7 +1370,7 @@ ORG &6000
     BEQ _els_not_solved
 .els_solved
     \LDA digit
-    LDX fix_pos
+    LDX var_pos
     LDA cands_89v, X
     JSR elim_out        \  Eliminate candidates it sees
     JMP _els_not_in
@@ -1219,12 +1379,35 @@ ORG &6000
     LDX var_pos
 ._els_not_in
     INC var_pos
+    LDA solved
+    CMP #81
+    BCS _els_done
     LDX var_pos
     CPX #81
     BCC _els_pos
+._els_done
     RTS
 
-    
+\  DISPLAY A SINGLE DIGIT
+
+.disp_digit
+    PHA
+    ORA #&30
+    JSR oswrch
+    PLA
+    RTS
+
+\  DISPLAY A SINGLE DIGIT FOLLOWED BY A SPACE
+
+.disp_digit_sp
+    PHA
+    ORA #&30
+    JSR oswrch
+    LDA #32
+    JSR oswrch
+    PLA
+    RTS
+
 .say
     PHP                 \  Stash everything on the 6502 stack
     PHA
@@ -1278,6 +1461,27 @@ ORG &6000
     CPX #81
     BCC _dpg_0
     JMP osnewl
+    
+.disp_hex_cands
+    PHA
+    TYA
+    PHA
+    TXA
+    PHA
+    LDA #43             \  "+"
+    JSR oswrch
+    TXA
+    JSR disp_hex_byte
+    LDA cands_17, X
+    JSR disp_hex_byte
+    LDA cands_89v, X
+    JSR disp_hex_byte
+    PLA
+    TAX
+    PLA
+    TAY
+    PLA
+    RTS
     
 .disp_hex_byte
     PHA
