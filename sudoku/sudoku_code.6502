@@ -1,27 +1,28 @@
-scr_ptr         = &70
-see_ptr         = &72
-text_ptr        = &74
+scr_ptr         = &70   \  Pointer to screen memory
+see_ptr         = &72   \  Pointer to vision map
+text_ptr        = &74   \  Text pointer for printing
 
-set_ptr         = &76
+set_ptr         = &76   \  Main set pointer
+alt_ptr         = &78   \  Alternate set pointer for 2-way set operations
 
-remainder       = &81
+remainder       = &81   \  For dodgy fast division routine, or scratch
 divisor         = &82
 quotient        = &80
 
-multiplier      = &80
+multiplier      = &80   \  For multiplication routine, or scratch
 preload         = &82
 multiplicand    = &84
 product         = &80
 
 tempX           = &86
 tempY           = &87
-pixelX          = &88
-pixelY          = &89
-fix_pos         = &8A
-var_pos         = &8B
-solved          = &8C
+pixelX          = &88   \  Pixel X co-ordinate 0..77
+pixelY          = &89   \  Pixel Y co-ordinate 0..74  (0 is top of screen!)
+fix_pos         = &8A   \  Fixed position to which we are comparing cells
+var_pos         = &8B   \  Variable position of cell being compared
+solved          = &8C   \  Number of solved digits in puzzle so far
 digit           = &8D
-cand_copy       = &8E
+cand_copy       = &8E   \  Copy of candidates for cell under consideration
 
 \  BASIC VARIABLES
 
@@ -96,9 +97,13 @@ ORG &6000
     JMP elim_set
 .ext_dump_grid
     JMP dump_grid
+.ext_count_solved
+    JMP count_solved
+.ext_clr_digit
+    JMP clr_digit
+.ext_write_digit
+    JMP write_digit
     
-\    .ext_write_digit
-\        JMP write_digit
 \    .ext_set_pmk
 \        JMP set_pmk
 \    .ext_clr_pmk
@@ -361,10 +366,10 @@ ORG &6000
     ROR product         \  Equivalent to DIV 8
     CLC
     LDA product
-    ADC #see_table MOD256
+    ADC #vision_map MOD256
     STA see_ptr
     LDA product+1
-    ADC #see_table DIV256
+    ADC #vision_map DIV256
     STA see_ptr+1
     LDY #0
     LDA (see_ptr), Y
@@ -692,18 +697,53 @@ ORG &6000
     STA cands_89v, X    \  Solved digit value
     INC solved
     RTS
+    
+\  CLEAR A DIGIT VALUE
 
-.conv_xy
-    TAX
-.conv_xyX
-    LDA xy_coords, X
-    TAX
-    JSR lsra4
-    TAY
-    TXA
-    AND #&0F
-    TAX
+.clr_digit
+    LDA cands_17, X     \  See if cell is already solved ...
+    BPL _cdt_0          \  ... Skip if not
+    DEC solved          \  Decrease count of solved digits
+._cdt_0
+    LDA #&7F            \  Unsolved; can be 1, 2, 3, 4, 5, 6, 7
+    STA cands_17, X
+    LDA #&C0            \  can be 8, 9
+    STA cands_89v, X
     RTS
+    
+\  COUNT UP SOLVED DIGITS
+
+.count_solved
+    LDX #0
+    STX solved          \  Start with no digits solved
+._csd_0
+    LDA cands_17, X     \  Test whether cell is solved
+    AND #&80            \  Bit 7 => solved
+    BEQ _csd_1          \  Skip if not solved
+    INC solved          \  Increase count of solved digits
+._csd_1
+    INX                 \  Move onto next cell
+    CPX #81
+    BCC _csd_0          \  Go round again if any more cells untested
+    RTS
+
+\  CONVERT A CELL POSITION 0..80 IN A OR X TO A PAIR OF CO-ORDINATES
+\  WHICH WILL BE RETURNED IN X AND Y
+
+.conv_xy                \  Position is in A to begin with
+    TAX
+.conv_xyX               \  Position is already in X
+    LDA xy_coords, X    \  Now high nybble = Y, low nybble = X
+    TAX
+    JSR lsra4           \  Shift down high nybble ...
+    TAY                 \  ... giving Y co-ordinate
+    TXA
+    AND #&0F            \  Mask out Y co-ordinate in high nybble ...
+    TAX                 \  ... leaving X co-ordinate
+    RTS
+
+\  SHIFT ACCUMULATOR RIGHT 4 PLACES
+\  (4 bytes + RTS, but a JSR here is only 3 bytes)
     
 .lsra4
     LSR A
@@ -742,6 +782,9 @@ ORG &6000
     TAY
     PLA
     RTS
+
+\  EXTENDED VERSION; DISPLAYS THE POSITION AND ITS CANDIDATE DIGITS
+\  CARE: USES EVEN MORE STACK!
 
 .disp_pos_ext
     PHA
@@ -802,6 +845,9 @@ ORG &6000
     PLA
     RTS
 
+\  DISPLAY THE CONTENTS OF A CELL; EITHER AS A DIGIT IF IT IS SOLVED, OR
+\  AS A CONSTELLATION OF PENCIL MARKS IF IT IS NOT YET SOLVED.
+
 .disp_contents
     PHA
     TYA
@@ -811,10 +857,6 @@ ORG &6000
     LDA digit
     PHA
     JSR copy_cands
-    \LDA cands_17, X
-    \STA cand_copy
-    \LDA cands_89v, X
-    \STA cand_copy+1
     JSR conv_xyX        \  Now X, Y hold co-ords
     BIT cand_copy       \  Bit 7 = 1 => solved
     BPL _dcc_pmark
@@ -852,6 +894,10 @@ ORG &6000
     PLA
     RTS
 
+\  TAKE A TALLY OF DIGITS WITHIN A SET
+\
+\  
+    
 .reset_tally
     LDX #9
     LDA #0
@@ -902,7 +948,7 @@ ORG &6000
     RTS
     
 \  ELIMINATE CANDIDATES FROM CELLS, WORKING OUTWARDS
-\  THIS IS not SAFELY RE-ENTRANT, SO WE CAN't CHASE UP NAKED SINGLES
+\  THIS IS SAFELY RE-ENTRANT, SO WE CAN CHASE UP NAKED SINGLES
 
 \  ORIGINAL BASIC
 \
@@ -939,19 +985,6 @@ ORG &6000
     JSR show_seen
     LDX fix_pos
     JSR disp_contents
-    
-    \JSR say
-    \EQUS "Working out from "
-    \BRK
-    \LDA digit
-    \JSR disp_digit_sp
-    \JSR say
-    \EQUS "in "
-    \BRK
-    \LDX fix_pos
-    \JSR disp_pos
-    \LDA #58             \ ":"
-    \JSR osnewl
 
 \ 5120FORJ%=0TO80
 
@@ -994,22 +1027,6 @@ ORG &6000
 \ 5170IF(E%AND&1000000)=0PRINT;D%;" in ";:PROCdisp_pos(I%):PRINT" sees ";:PROCdisp_pos(J%):PRINT
 
 ._neo_not_naked
-    \LDX fix_pos
-    \LDA cands_89v, X
-    \ADC #48             \  We know C=0 here
-    \JSR oswrch
-    \JSR say
-    \EQUS " in "
-    \BRK
-    \LDX fix_pos
-    \JSR disp_pos
-    \JSR say
-    \EQUS " sees "
-    \BRK
-    \LDX var_pos
-    \\JSR disp_pos_ext
-    \JSR disp_pos
-    \JSR osnewl
 
 \ 5180PROCdisp_cont(J%)
 
@@ -1024,20 +1041,6 @@ ORG &6000
     CPX #81
     BCC _neo_test
 
-    \JSR say
-    \EQUS "Done out from "
-    \BRK
-    \LDA digit
-    \JSR disp_digit_sp
-    \JSR say
-    \EQUS "in "
-    \BRK
-    \LDX fix_pos
-    \JSR disp_pos
-    \LDA #33             \ "!"
-    \JSR oswrch
-    \JSR osnewl
-    
 \ 5200ENDPROC
 
     PLA
@@ -1065,8 +1068,8 @@ ORG &6000
     JMP _neo_no_elim
 
 \  ELIMINATE CANDIDATES FROM A CELL, WORKING INWARDS
+\  SAFELY RE-ENTRANT
 
-    
 .elim_in
     LDA fix_pos         \  Save fixed and variable positions
     PHA                 \  (which we are going to stomp on)
@@ -1076,14 +1079,6 @@ ORG &6000
     STX fix_pos
     LDY #66
     JSR show_seen
-
-    \JSR say
-    \EQUS "Working into "
-    \BRK
-    \LDX fix_pos
-    \JSR disp_pos
-    \LDA #58             \ :
-    \JSR osnewl
 
     LDX #0
     STX var_pos
@@ -1144,8 +1139,6 @@ ORG &6000
     EQUS " sees "
     BRK
     LDA digit           \  Display digit in seen cell
-    \ORA #&30
-    \JSR oswrch
     JSR disp_digit_sp
     JSR say
     EQUS "in "
@@ -1161,8 +1154,6 @@ ORG &6000
     PLA
     PLP
     RTS
-    
-
 
 \  SHOW ALL INSTANCES OF A CANDIDATE
 
@@ -1334,10 +1325,14 @@ ORG &6000
     LDX var_pos
     JSR elim_out
 ._fis_not_in
+    LDA solved          \  Terminate loop early if puzzle is finished
+    CMP #81
+    BCS _fis_done
     INC var_pos
     LDX var_pos
     CPX #81
     BCC _fis_pos
+._fis_done
     RTS
     
 ._fis_dbg
@@ -1379,7 +1374,7 @@ ORG &6000
     LDX var_pos
 ._els_not_in
     INC var_pos
-    LDA solved
+    LDA solved          \  Terminate loop early if puzzle is finished
     CMP #81
     BCS _els_done
     LDX var_pos
@@ -1576,23 +1571,156 @@ ALIGN &100
 ORG &7680
 
 .group_map
-    BRK
+    EQUB&FF:EQUB&80:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&7F:EQUB&C0:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&3F:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&1F:EQUB&F0:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&0F:EQUB&F8:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&07:EQUB&FC:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&03:EQUB&FE:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&01:EQUB&FF:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&FF:EQUB&80:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
+    EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&00:EQUB&40:EQUB&20
+    EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
+    EQUB&00:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00
+    EQUB&80:EQUB&40:EQUB&20:EQUB&00:EQUB&10:EQUB&08:EQUB&04:EQUB&02
+    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&00:EQUB&08
+    EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10
+    EQUB&08:EQUB&00:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
+    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&00:EQUB&02:EQUB&01:EQUB&00
+    EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&00
+    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04
+    EQUB&02:EQUB&01:EQUB&00:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10
+    EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&E0:EQUB&70
+    EQUB&38:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81:EQUB&C0:EQUB&E0
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81:EQUB&C0
+    EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&70:EQUB&38:EQUB&1C:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81
+    EQUB&C0:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&70:EQUB&38:EQUB&1C:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&0E:EQUB&07:EQUB&03
+    EQUB&80
 
 ORG &7800
 
-.see_table
+.vision_map
+    EQUB&7F:EQUB&F0:EQUB&38:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&5F:EQUB&F8:EQUB&1C:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&37:EQUB&FC:EQUB&0E:EQUB&01
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&1D:EQUB&F1
+    EQUB&C0:EQUB&E0:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02
+    EQUB&0F:EQUB&78:EQUB&E0:EQUB&70:EQUB&10:EQUB&08:EQUB&04:EQUB&02
+    EQUB&01:EQUB&00:EQUB&87:EQUB&DC:EQUB&70:EQUB&38:EQUB&04:EQUB&02
+    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&23:EQUB&F6:EQUB&07:EQUB&03
+    EQUB&81:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&09:EQUB&FD
+    EQUB&03:EQUB&81:EQUB&C0:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04
+    EQUB&02:EQUB&FF:EQUB&01:EQUB&C0:EQUB&E0:EQUB&10:EQUB&08:EQUB&04
+    EQUB&02:EQUB&01:EQUB&00:EQUB&F0:EQUB&1F:EQUB&FC:EQUB&08:EQUB&04
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&38:EQUB&17:EQUB&FE
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&1C
+    EQUB&0D:EQUB&FF:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
+    EQUB&04:EQUB&01:EQUB&C7:EQUB&7C:EQUB&70:EQUB&20:EQUB&10:EQUB&08
+    EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&E3:EQUB&DE:EQUB&38:EQUB&08
+    EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&71:EQUB&F7
+    EQUB&1C:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10
+    EQUB&07:EQUB&FD:EQUB&81:EQUB&C0:EQUB&80:EQUB&40:EQUB&20:EQUB&10
+    EQUB&08:EQUB&04:EQUB&03:EQUB&FF:EQUB&40:EQUB&E0:EQUB&20:EQUB&10
+    EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&01:EQUB&FF:EQUB&C0:EQUB&70
+    EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&78:EQUB&1C
+    EQUB&07:EQUB&FC:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20
+    EQUB&1C:EQUB&0E:EQUB&05:EQUB&FD:EQUB&00:EQUB&80:EQUB&40:EQUB&20
+    EQUB&10:EQUB&08:EQUB&0E:EQUB&07:EQUB&03:EQUB&7E:EQUB&40:EQUB&20
+    EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&00:EQUB&E0:EQUB&71:EQUB&DF
+    EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&70
+    EQUB&38:EQUB&F7:EQUB&84:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
+    EQUB&20:EQUB&38:EQUB&1C:EQUB&7D:EQUB&C1:EQUB&00:EQUB&80:EQUB&40
+    EQUB&20:EQUB&10:EQUB&08:EQUB&03:EQUB&81:EQUB&FF:EQUB&60:EQUB&40
+    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&C0:EQUB&FF
+    EQUB&D0:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80
+    EQUB&E0:EQUB&7F:EQUB&F0:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80
+    EQUB&40:EQUB&30:EQUB&08:EQUB&04:EQUB&01:EQUB&FF:EQUB&C0:EQUB&E0
+    EQUB&40:EQUB&20:EQUB&10:EQUB&04:EQUB&02:EQUB&01:EQUB&01:EQUB&7F
+    EQUB&E0:EQUB&70:EQUB&10:EQUB&08:EQUB&04:EQUB&01:EQUB&00:EQUB&80
+    EQUB&40:EQUB&DF:EQUB&F0:EQUB&38:EQUB&04:EQUB&02:EQUB&01:EQUB&00
+    EQUB&40:EQUB&20:EQUB&10:EQUB&77:EQUB&C7:EQUB&03:EQUB&81:EQUB&00
+    EQUB&80:EQUB&40:EQUB&10:EQUB&08:EQUB&04:EQUB&3D:EQUB&E3:EQUB&81
+    EQUB&C0:EQUB&40:EQUB&20:EQUB&10:EQUB&04:EQUB&02:EQUB&01:EQUB&1F
+    EQUB&71:EQUB&C0:EQUB&E0:EQUB&10:EQUB&08:EQUB&04:EQUB&01:EQUB&00
+    EQUB&80:EQUB&4F:EQUB&D8:EQUB&1C:EQUB&0E:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&40:EQUB&20:EQUB&17:EQUB&F4:EQUB&0E:EQUB&07:EQUB&01
+    EQUB&00:EQUB&80:EQUB&40:EQUB&10:EQUB&08:EQUB&07:EQUB&FC:EQUB&07
+    EQUB&03:EQUB&80:EQUB&40:EQUB&20:EQUB&18:EQUB&04:EQUB&02:EQUB&01
+    EQUB&C0:EQUB&7F:EQUB&F0:EQUB&20:EQUB&10:EQUB&08:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&E0:EQUB&5F:EQUB&F8:EQUB&08:EQUB&04:EQUB&02
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&70:EQUB&37:EQUB&FC:EQUB&02
+    EQUB&01:EQUB&00:EQUB&80:EQUB&20:EQUB&10:EQUB&08:EQUB&07:EQUB&1D
+    EQUB&F1:EQUB&C0:EQUB&80:EQUB&40:EQUB&20:EQUB&08:EQUB&04:EQUB&02
+    EQUB&03:EQUB&8F:EQUB&78:EQUB&E0:EQUB&20:EQUB&10:EQUB&08:EQUB&02
+    EQUB&01:EQUB&00:EQUB&81:EQUB&C7:EQUB&DC:EQUB&70:EQUB&08:EQUB&04
+    EQUB&02:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&1F:EQUB&F6:EQUB&07
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&20:EQUB&10:EQUB&08:EQUB&0F
+    EQUB&FD:EQUB&03:EQUB&80:EQUB&80:EQUB&40:EQUB&20:EQUB&08:EQUB&04
+    EQUB&02:EQUB&07:EQUB&FF:EQUB&01:EQUB&C0:EQUB&20:EQUB&10:EQUB&0C
+    EQUB&02:EQUB&01:EQUB&00:EQUB&E0:EQUB&70:EQUB&1F:EQUB&F0:EQUB&08
+    EQUB&04:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&70:EQUB&38:EQUB&17
+    EQUB&F4:EQUB&02:EQUB&01:EQUB&00:EQUB&40:EQUB&20:EQUB&10:EQUB&38
+    EQUB&1C:EQUB&0D:EQUB&F9:EQUB&00:EQUB&80:EQUB&40:EQUB&10:EQUB&08
+    EQUB&04:EQUB&03:EQUB&81:EQUB&C7:EQUB&7C:EQUB&40:EQUB&20:EQUB&10
+    EQUB&04:EQUB&02:EQUB&01:EQUB&01:EQUB&C0:EQUB&E3:EQUB&DE:EQUB&10
+    EQUB&08:EQUB&04:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&E0:EQUB&71
+    EQUB&F7:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&40:EQUB&20:EQUB&10
+    EQUB&0E:EQUB&07:EQUB&FD:EQUB&81:EQUB&00:EQUB&80:EQUB&40:EQUB&10
+    EQUB&08:EQUB&04:EQUB&07:EQUB&03:EQUB&FF:EQUB&40:EQUB&40:EQUB&20
+    EQUB&10:EQUB&04:EQUB&02:EQUB&01:EQUB&03:EQUB&81:EQUB&FF:EQUB&C0
+    EQUB&10:EQUB&08:EQUB&06:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20
+    EQUB&10:EQUB&07:EQUB&FF:EQUB&03:EQUB&80:EQUB&80:EQUB&40:EQUB&20
+    EQUB&10:EQUB&08:EQUB&04:EQUB&05:EQUB&FF:EQUB&81:EQUB&C0:EQUB&20
+    EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&03:EQUB&7F:EQUB&C0
+    EQUB&E0:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&41
+    EQUB&DF:EQUB&1C:EQUB&0E:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
+    EQUB&20:EQUB&10:EQUB&F7:EQUB&8E:EQUB&07:EQUB&00:EQUB&80:EQUB&40
+    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&7D:EQUB&C7:EQUB&03:EQUB&80
+    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&3F:EQUB&60
+    EQUB&70:EQUB&38:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80
+    EQUB&5F:EQUB&D0:EQUB&38:EQUB&1C:EQUB&02:EQUB&01:EQUB&00:EQUB&80
+    EQUB&40:EQUB&20:EQUB&1F:EQUB&F0:EQUB&1C:EQUB&0F:EQUB&00:EQUB&80
+    EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&07:EQUB&01:EQUB&FF:EQUB&C0
+    EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&03:EQUB&81
+    EQUB&7F:EQUB&E0:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00
+    EQUB&81:EQUB&C0:EQUB&DF:EQUB&F0:EQUB&04:EQUB&02:EQUB&01:EQUB&00
+    EQUB&80:EQUB&40:EQUB&20:EQUB&1C:EQUB&77:EQUB&C7:EQUB&01:EQUB&00
+    EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&0E:EQUB&3D:EQUB&E3
+    EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&07
+    EQUB&1F:EQUB&71:EQUB&C0:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&7F:EQUB&D8:EQUB&1C:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&3F:EQUB&F4:EQUB&0E:EQUB&01
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&1F:EQUB&FC
+    EQUB&07:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&03
+    EQUB&81:EQUB&C0:EQUB&7F:EQUB&A0:EQUB&10:EQUB&08:EQUB&04:EQUB&02
+    EQUB&01:EQUB&01:EQUB&C0:EQUB&E0:EQUB&5F:EQUB&C8:EQUB&04:EQUB&02
+    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&E0:EQUB&70:EQUB&37:EQUB&E2
+    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&0E:EQUB&07
+    EQUB&1D:EQUB&F0:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04
+    EQUB&07:EQUB&03:EQUB&8F:EQUB&78:EQUB&20:EQUB&10:EQUB&08:EQUB&04
+    EQUB&02:EQUB&01:EQUB&03:EQUB&81:EQUB&C7:EQUB&DC:EQUB&08:EQUB&04
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&38:EQUB&1F:EQUB&F6
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&1C
+    EQUB&0F:EQUB&FD:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
+    EQUB&04:EQUB&0E:EQUB&07:EQUB&FF:EQUB&00
 
-    BRK
 .code_end
 
-cands_17        = see_table + 821
+cands_17        = vision_map + 821
 cands_89v       = cands_17 + 81
 cand_count      = cands_17 + 162
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
-
-PRINT "group_map=",~group_map
-PRINT "see_table=",~see_table
-PRINT "cands_17=",~cands_17
-PRINT "cands_89v=",~cands_89v
-PRINT "cand_count=",~cand_count

@@ -1,0 +1,16 @@
+\  DISCIMG.6502
+\
+\  THIS GENERATES THE DISC IMAGE WITH THE CODE AND THE BASIC WRAPPER
+
+INCLUDE "sudoku_code.6502"
+
+PUTBASIC "sudoku.bas", "SUDOKU"
+
+ORG &8000
+
+.boot_begin
+    \EQUS "CLOSE#0":EQUB13
+    EQUS "CHAIN":EQUB34:EQUS"SUDOKU":EQUB34:EQUB13
+.boot_end
+
+SAVE "!BOOT", boot_begin, boot_end

@@ -1,0 +1,222 @@
+   10MODE7
+   20HIMEM=&6000
+   30*L.M.SUDOKU0
+  100*K.1G.1000|M
+  110PRINT''CHR$129"f1"CHR$135"Edit puzzle"
+  120*K.2G.2000|M
+  130PRINT''CHR$129"f2"CHR$135"Read puzzle from program"
+  140*K.3G.3000|M
+  150PRINT''CHR$129"f3"CHR$135"Solve puzzle"
+  160PRINT
+  170scr_ptr=&70:see_ptr=&72:text_ptr=&74:set_ptr=&76:alt_ptr=&78
+  180solved=&8C
+  200grp_map=&7680
+  210see_map=&7800
+  220cands_17=&7B35
+  230cands_89v=&7B86
+  240cand_count=&7BD7
+  250reset_grid=&6000
+  260test_solved=&600F
+  270disp_pos=&6018
+  280show_set=&6039
+  290tally_set=&603C
+  300test_cand=&6012
+  310get_see=&601E
+  320set_digit=&6003
+  330clr_digit=&604E
+  340count_solved=&604B
+  350elim_out=&6024
+  360reset_tally=&6027
+  370get_cell=&6030
+  380fill_set=&603F
+  390elim_in=&6042
+  400elim_set=&6045
+  410wrt_digit=&6051
+  420disp_cont=&601B
+  900CALLreset_grid
+  910END
+ 1000PROCginit
+ 1010PROChelp
+ 1020R%=0:C%=0:M$=" "
+ 1030REPEAT
+ 1040PRINTTAB(0,1);:PROCdisp_cands(R%*9+C%):PRINTTAB(30,1);M$:D%=FNsolved(R%*9+C%):PROCwrt_digit(C%,R%,10):M%=FNpeek(scr_ptr)+40
+ 1050K$=INKEY$10
+ 1060N%=R%*9+C%+cands_17:IF?N%=&7F ANDN%?81=&C0 PROCwrt_digit(C%,R%,0)ELSEPROCdisp_cont(R%*9+C%):!M%=!M%AND&2F2F2FFF
+ 1070IFK$="Z"ANDC%>0C%=C%-1
+ 1080IFK$="X"ANDC%<8C%=C%+1
+ 1090IFK$=":"ANDR%>0R%=R%-1
+ 1100IFK$="/"ANDR%<8R%=R%+1
+ 1110IFK$<>"R"GOTO1130
+ 1120IFM$="R"M$=" "ELSEM$="R"
+ 1130IFK$<>"D"GOTO1150
+ 1140IFM$="D"M$=" "ELSEM$="D"
+ 1150IFK$<"1"ORK$>"9"GOTO1210
+ 1160IFFNtest_cand(R%*9+C%,ASCK$-48)=0VDU7:GOTO1210
+ 1170PROCwrt_digit(C%,R%,ASCK$-48)
+ 1180IFD%PROCclr_digit(R%*9+C%)
+ 1190PROCset_digit(R%*9+C%,ASCK$-48)
+ 1200PROCelim_out(R%*9+C%,ASCK$-48):CLS
+ 1210IFK$<>"0"GOTO1240
+ 1220PROCwrt_digit(C%,R%,0)
+ 1230PROCclr_digit(R%*9+C%)
+ 1240IFK$<>" "AND(K$<"0"ORK$>"9")GOTO1270
+ 1250IFM$="R"C%=C%+1:IFC%>8C%=C%-9:R%=(R%+1)MOD9
+ 1260IFM$="D"R%=R%+1:IFR%>8R%=R%-9:C%=(C%+1)MOD9
+ 1270IFK$="S"PROCsave
+ 1280IFK$="L"PROCload
+ 1290IFK$="P"PROCposs
+ 1300IFK$="E"PROCexport
+ 1310IFK$="H"PROChelp
+ 1320UNTILK$=CHR$13
+ 1330CALLcount_solved
+ 1340CLS:PRINT;?solved;"/81 digits."
+ 1350PRINT'"Press"CHR$129"f3"CHR$135"to solve puzzle.":END
+ 1360DEFPROCsave
+ 1370PRINT"Filename ";:INPUTF$
+ 1380OSCLI"SAVE "+F$+" "+STR$~cands_17+" +A2"
+ 1390CLS:ENDPROC
+ 1400DEFPROCload
+ 1410PRINT"Filename ";:INPUTF$
+ 1420OSCLI"LOAD "+F$+" "+STR$~cands_17
+ 1430PROCposs:CALLcount_solved:ENDPROC
+ 1440DEFPROCposs
+ 1450LOCALM%,X%:FORX%=0TO80:M%=X%+cands_17
+ 1460IF?M%=&7F ANDM%?81=&C0 PROCwrt_digit(C%,R%,0)ELSEPROCdisp_cont(X%)
+ 1470NEXT:CLS:ENDPROC
+ 1480DEFPROCexport
+ 1490LOCALF$,L$,R%,C%,I%,D%
+ 1500PRINT"Filename ";:INPUTF$
+ 1510PRINT"Line (";L%;")";:INPUTL$:IFL$>"0"L%=VALL$
+ 1520ONERRORGOTO1660
+ 1530IFF$>""OSCLI"SPOOL "+F$
+ 1540I%=0:FORR%=0TO8:PRINTRIGHT$("    "+STR$L%,5);:L%=L%+10
+ 1550FORC%=0TO8:IFC%PRINT",";ELSEPRINT"DATA";
+ 1560D%=FNsolved(I%):I%=I%+1:PRINT;D%;
+ 1570NEXT:PRINT:NEXT
+ 1580*SP.
+ 1590ONERROROFF
+ 1600CLS:ENDPROC
+ 1610DEFPROChelp
+ 1620PRINTTAB(0,3)CHR$131"ZX*/"CHR$135"move cursor "CHR$131"0"CHR$135"clear digit"CHR$131"1-9"CHR$135"place digit  "CHR$131"SPACE"CHR$135"advance";
+ 1630PRINTCHR$131"R"CHR$134"ight"CHR$131"D"CHR$134"own"CHR$135"after placing"
+ 1640PRINTCHR$131"P"CHR$135"ossible"CHR$131"S"CHR$135"ave"CHR$131"L"CHR$135"oad"CHR$131"E"CHR$135"xport";
+ 1650ENDPROC
+ 1660ONERROROFF
+ 1670*SP.
+ 1680REPORT:PRINT" at line ";ERL;" *SPOOL off"
+ 1690END
+ 2000T%=TIME:PROCginit
+ 2010PRINT"Starting line (FIRST) ";:INPUTL$:IFL$>"0"RESTOREVALL$
+ 2020CALLreset_grid:I%=0
+ 2030FORR%=0TO8
+ 2040FORC%=0TO8
+ 2050READD%
+ 2060IFD%=0GOTO2090
+ 2070PROCset_digit(I%,D%)
+ 2080PROCelim_out(I%,D%)
+ 2090I%=I%+1
+ 2100NEXT
+ 2110NEXT
+ 2120PRINT'"Press"CHR$129"f3"CHR$135"to solve puzzle.":END
+ 3000T%=TIME
+ 3010REPEAT
+ 3020os%=?solved
+ 3030M%=grp_map
+ 3040FORR%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying R";R%+1:PROCshow_set(57)
+ 3050PROCelim_set
+ 3060PROCtally_set:PROCtally
+ 3070FORD%=1TO9
+ 3080IFcand_count?D%=1PRINT;D%;" in R";R%+1;" has one home!":PROCfill_set(D%)
+ 3090IF?solved=81D%=9:R%=9:C%=9
+ 3100NEXT
+ 3110M%=M%+11:NEXT
+ 3120IF?solved=81GOTO3300
+ 3130FORC%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying C";C%+1:PROCshow_set(57)
+ 3140PROCelim_set
+ 3150PROCtally_set:PROCtally
+ 3160FORD%=1TO9
+ 3170IFD%?cand_count=1PRINT;D%;" in C";C%+1;" has one home!":PROCfill_set(D%)
+ 3180IF?solved=81D%=9:R%=9:C%=9
+ 3190NEXT
+ 3200M%=M%+11:NEXT
+ 3210IF?solved=81GOTO3300
+ 3220FORB%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying B";B%+1:PROCshow_set(57)
+ 3230PROCelim_set
+ 3240PROCtally_set:PROCtally
+ 3250FORD%=1TO9
+ 3260IFD%?cand_count=1PRINT;D%;" in B";B%+1;" has one home!":PROCfill_set(D%)
+ 3270IF?solved=81D%=9:R%=9:C%=9
+ 3280NEXT
+ 3290M%=M%+11:NEXT
+ 3300UNTIL?solved=81OR?solved=os%
+ 3310PRINT"Finished (";?solved;"/81) in ";(TIME-T%)/100;" sec."
+ 3320END
+ 4000DEFFNsolved(X%)=USRtest_solved AND&F
+ 4010DEFPROCdisp_pos(X%)
+ 4020CALLdisp_pos:ENDPROC
+ 4030DEFFNhex(V%,L%)=RIGHT$(STRING$(L%,"0")+STR$~V%,L%)
+ 4040DEFPROCshow_set(Y%)
+ 4050CALLshow_set:ENDPROC
+ 4060DEFPROCtally_set
+ 4070CALLtally_set:ENDPROC
+ 4080DEFFNtest_cand(X%,A%)=(USRtest_cand AND&2000000)=0
+ 4090DEFFNpeek(M%):LOCALV%
+ 4100V%=!M%AND&FFFF
+ 4110=V%
+ 4120DEFPROCpoke(M%,V%)
+ 4130!M%=!M%AND&FFFF0000 ORV%AND&FFFF
+ 4140ENDPROC
+ 4150DEFFNsee(X%,Y%)
+ 4160LOCALU%:U%=USRget_see
+ 4170=(U%AND&2000000)=0
+ 4180DEFPROCginit
+ 4190LOCALY%:VDU22,7
+ 4200FORY%=0TO17:VDU31,0,Y%,151:NEXT
+ 4210FORY%=0TO2:VDU31,32,Y%+22,146,154,31,32,Y%+19,147,154:NEXT
+ 4220VDU28,0,24,31,18,23,0,10,32,0;0;0;
+ 4230ENDPROC
+ 4240DEFPROCset_digit(X%,A%)
+ 4250REMPRINT"Pos ";X%;" ";:PROCdisp_pos(X%):PRINT" becomes ";A%;":"
+ 4260CALLset_digit
+ 4270ENDPROC
+ 4280DEFPROCwrt_digit(X%,Y%,A%)
+ 4290CALLwrt_digit:ENDPROC
+ 4300DEFPROCclr_digit(X%)
+ 4310CALLclr_digit:ENDPROC
+ 4320DEFPROCdisp_cont(X%)
+ 4330CALLdisp_cont:ENDPROC
+ 4340DEFPROCelim_out(X%,A%)
+ 4350CALLelim_out:ENDPROC
+ 4360DEFPROCreset_tally
+ 4370CALLreset_tally:ENDPROC
+ 4380DEFPROCtally
+ 4390LOCALI%:FORI%=0TO9:PRINT;I%?cand_count;" ";:NEXT:PRINT
+ 4400ENDPROC
+ 4410DEFFNcell(Y%)
+ 4420LOCALU%:U%=USRget_cell:=(U%AND&2000000)=0
+ 4430DEFPROCfill_set(A%)
+ 4440CALLfill_set:ENDPROC
+ 4450DEFPROCelim_in(X%)
+ 4460CALLelim_in:ENDPROC
+ 4470DEFPROCelim_set
+ 4480CALLelim_set:ENDPROC
+ 4490DEFPROCdisp_cands(X%)
+ 4500LOCALM%,B%,C%,I%,J%
+ 4510C%=cands_17?X%*256+cands_89v?X%
+ 4520PROCdisp_pos(X%):PRINT"=";
+ 4530IFC%AND&8000PRINT"*";C%AND&0F;"*      ":GOTO4590
+ 4540B%=&4000:J%=9:FORI%=1TO9
+ 4550REMPRINTFNhex(B%,4);" ";FNhex(C%,4)
+ 4560IFC%ANDB%PRINT;I%;:J%=J%-1
+ 4570B%=B%DIV2:NEXT
+ 4580PRINTSTRING$(J%," ")
+ 4590ENDPROC
+ 8000DATA0,0,0,2,0,0,6,0,0
+ 8010DATA0,5,0,9,0,0,0,7,0
+ 8020DATA0,1,0,0,8,0,5,0,0
+ 8030DATA2,0,0,0,0,0,0,0,0
+ 8040DATA0,4,5,0,0,3,2,0,7
+ 8050DATA0,0,7,0,0,9,3,0,0
+ 8060DATA0,0,0,8,9,0,0,0,0
+ 8070DATA0,0,0,0,0,0,0,5,0
+ 8080DATA9,0,1,4,0,7,0,0,0

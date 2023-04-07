@@ -1,0 +1,33 @@
+\  VARDUMP.6502
+\
+\  THIS GENERATES THE VARIABLE DUMP FOR THE BASIC WRAPPER
+
+INCLUDE "sudoku_code.6502"
+
+PRINT "#####  VARIABLES FOLLOW  #####"
+PRINT ""
+
+PRINT "grp_map=",~group_map
+PRINT "see_map=",~vision_map
+PRINT "cands_17=",~cands_17
+PRINT "cands_89v=",~cands_89v
+PRINT "cand_count=",~cand_count
+PRINT ""
+PRINT "reset_grid=",~ext_reset_grid
+PRINT "test_solved=",~ext_test_solved
+PRINT "disp_pos=",~ext_disp_pos
+PRINT "show_set=",~ext_show_set
+PRINT "tally_set=",~ext_tally_set
+PRINT "test_cand=",~ext_test_candidate
+PRINT "get_see=",~ext_get_see
+PRINT "set_digit=",~ext_set_digit
+PRINT "clr_digit=",~ext_clr_digit
+PRINT "count_solved=",~ext_count_solved
+PRINT "elim_out=",~ext_elim_out
+PRINT "reset_tally=",~ext_reset_tally
+PRINT "get_cell=",~ext_get_set_cell
+PRINT "fill_set=",~ext_fill_set
+PRINT "elim_in=",~ext_elim_in
+PRINT "elim_set=",~ext_elim_set
+PRINT "wrt_digit=",~ext_write_digit
+PRINT "disp_cont=",~ext_disp_contents
