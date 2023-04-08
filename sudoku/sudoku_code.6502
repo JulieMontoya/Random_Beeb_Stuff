@@ -1382,6 +1382,34 @@ ORG &6000
     BCC _els_pos
 ._els_done
     RTS
+    
+    
+\  INITIALISE THE ALTERNATE SET TO ALL ZEROS
+
+.init_alt_zero
+    LDY #10
+    LDA #0
+._ia0_0
+    STA (alt_ptr), Y
+    DEY
+    BPL _ia0_0
+    RTS
+
+\  INITIALISE THE ALTERNATE SET TO ALL ONES
+
+.init_alt_one
+    LDY #10
+    LDA #&80            \  Take care of the odd bit
+    STA (alt_ptr), Y
+    DEY
+    LDA #&FF            \  Now we can do the rest all the same
+._ia1_0
+    STA (alt_ptr), Y
+    DEY
+    BPL _ia1_0
+    RTS
+    
+
 
 \  DISPLAY A SINGLE DIGIT
 
@@ -1567,6 +1595,7 @@ ALIGN &100
     EQUB 84:EQUB 83:EQUB 82:EQUB 81:EQUB 80
     EQUB 44:EQUB 43:EQUB 42:EQUB 41:EQUB 40
     EQUB 4:EQUB 3:EQUB 2:EQUB 1:EQUB 0
+.slack_space
     
 ORG &7680
 
