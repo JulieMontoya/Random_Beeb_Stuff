@@ -31,3 +31,7 @@ PRINT "elim_in=",~ext_elim_in
 PRINT "elim_set=",~ext_elim_set
 PRINT "wrt_digit=",~ext_write_digit
 PRINT "disp_cont=",~ext_disp_contents
+PRINT "init_alt1=",~ext_init_alt_for_all
+PRINT "show_alt=",~ext_show_alt
+PRINT "and_seen=",~ext_and_alt_seen
+PRINT "test_alt=",~ext_test_alt

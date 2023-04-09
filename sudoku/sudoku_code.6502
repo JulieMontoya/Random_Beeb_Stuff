@@ -103,6 +103,14 @@ ORG &6000
     JMP clr_digit
 .ext_write_digit
     JMP write_digit
+.ext_init_alt_for_all
+    JMP init_alt_for_all
+.ext_show_alt
+    JMP show_alt
+.ext_and_alt_seen
+    JMP and_alt_seen
+.ext_test_alt
+    JMP test_alt
     
 \    .ext_set_pmk
 \        JMP set_pmk
@@ -1263,6 +1271,96 @@ ORG &6000
     BCC _shs_row
     RTS
 
+\  TEST WHETHER A CELL IS WITHIN THE ALTERNATE SET
+\  ON RETURN Z=1 => CELL WAS NOT IN ALT SET
+    
+.get_alt_cell
+    JSR calc_set_ofs    \  This works the same either way
+    LDA (alt_ptr), Y
+    AND bits_HL, X      \  Z=0 => bit was 1
+    RTS
+
+.set_alt_cell
+    JSR calc_set_ofs
+    LDA (alt_ptr), Y
+    ORA bits_HL, X
+    STA (alt_ptr), Y
+    RTS
+
+.clr_alt_cell
+    JSR calc_set_ofs
+    LDA (alt_ptr), Y
+    ORA bits_HL, X      \  force it to 1 ...
+    EOR bits_HL, X      \  ... then invert it
+    STA (alt_ptr), Y
+    RTS
+
+\  SHOW THE IN/OUT STATUS OF THE ALTERNATE SET OF GRID SQUARES
+\  ON ENTRY Y = VERTICAL POSITION
+\           alt-ptr,alt_ptr+1 => SET TO DISPLAY
+
+.show_alt
+    STY pixelY
+    LDA #0
+    STA var_pos
+._sha_row
+    LDA #68
+    STA pixelX
+._sha_col
+    LDY var_pos
+    JSR get_alt_cell
+    PHP                 \  Save Z flag for later
+    LDX pixelX
+    LDY pixelY
+    PLP                 \  Retrieve Z flag
+    BEQ _sha_0
+    JSR set_pixel
+    BNE _sha_next       \  Will always branch
+._sha_0
+    JSR clr_pixel
+._sha_next
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #77
+    BCC _sha_col
+    INC pixelY
+    LDA var_pos
+    CMP #81
+    BCC _sha_row
+    RTS
+    
+\  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH WHATEVER IS SEEN BY
+\  A DIGIT IN POSITION GIVEN BY X
+
+.and_alt_seen
+    LDA fix_pos
+    PHA
+    LDA var_pos
+    PHA
+    STX fix_pos         \  The digit we care what sees    
+    LDA #0
+    STA var_pos
+    TAX
+._aas_0
+    LDY fix_pos
+    JSR get_see
+    BNE _aas_1          \  Skip if cells see each other
+    LDY var_pos
+    JSR clr_alt_cell    \  Clear cell if it was not seen
+._aas_1
+    INC var_pos
+    LDX var_pos
+    CPX #81             \  See if we have reached end
+    BCC _aas_0
+._aas_done
+    PLA
+    STA var_pos
+    PLA
+    STA fix_pos
+    RTS
+
+    
 \  TALLY UP THE POSSIBLE CANDIDATES FOR THE CELLS IN A SET
 \  ON RETURN; cand_count     => SOLVED CELLS
 \             cand_count + 1 => POSSIBLE 1S
@@ -1408,8 +1506,51 @@ ORG &6000
     DEY
     BPL _ia1_0
     RTS
-    
 
+\  INITIALISE THE ALTERNATE SET TO INCLUDE ALL CELLS NOT IN THE
+\  MAIN SET
+    
+.init_alt_for_all
+    JSR init_alt_one
+    
+\  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH THE COMPLEMENT
+\  OF THE MAIN SET
+
+.excl_set_alt
+    LDA var_pos
+    PHA
+    LDY #0
+    STY var_pos
+._esa_test
+    JSR get_set_cell    \  Y already contains variable position
+    BEQ _esa_not_in     \  Skip if not in main set
+    LDY var_pos
+    JSR clr_alt_cell    \  Exclude this position from alt set
+._esa_not_in
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _esa_test
+    PLA
+    STA var_pos
+    RTS
+    
+\  TEST TO SEE IF ANY CELLS ARE STILL INCLUDED IN THE ALTERNATE SET
+\  ON RETURN Z=1 => NO CELLS
+\            Z=0 => ONE OR MORE CELLS
+
+.test_alt
+    LDY #10
+    LDA (alt_ptr), Y
+    AND #&80            \  Ignore bits 81-87
+    DEY                 \  Everything else is included
+.tea_0
+    ORA (alt_ptr), Y    \  Any ones will stick in A
+    DEY
+    BPL tea_0
+    TAY
+    RTS
+    
 
 \  DISPLAY A SINGLE DIGIT
 
