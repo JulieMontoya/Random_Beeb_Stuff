@@ -111,7 +111,14 @@ ORG &6000
     JMP and_alt_seen
 .ext_test_alt
     JMP test_alt
-    
+.ext_get_alt_cell
+    JMP get_alt_cell
+.ext_and_alt_digit
+    JMP and_alt_digit
+.ext_init_alt_digit
+    JMP init_alt_digit
+.ext_elim_ext
+    JMP elim_ext
 \    .ext_set_pmk
 \        JMP set_pmk
 \    .ext_clr_pmk
@@ -566,7 +573,11 @@ ORG &6000
 \    JSR disp_hex_cands  \  Hex rep of destination and candidates
 \    JSR osnewl
     LDA cands_17, X
-    BMI _ec_never_set   \  Exit if already solved
+    BPL _ec_not_solved  \  Exit if already solved
+._ec_never_set
+    SEC                 \  C=1 => candidate was never allowed
+    RTS
+._ec_not_solved
     CPY #8
     BCS _ec_89
 ._ec_17
@@ -628,6 +639,20 @@ ORG &6000
     LDA preload
     STA cands_89v, X    \  Store cell value
     INC solved          \  Increase solved count
+    \JSR _ctc_naked1
+    TXA
+    PHA
+    JSR disp_pos
+    JSR say
+    EQUS " can only contain "
+    BRK
+    LDA preload
+    JSR disp_digit
+    LDA #33             \  "!"
+    JSR oswrch
+    JSR osnewl
+    PLA
+    TAX
     LDA digit
     PHA
     TXA
@@ -647,12 +672,7 @@ ORG &6000
     CLC                 \  C=0 => successful elimination, A is count
 ._ctc_rts
     RTS
-    
-._ec_never_set
-    SEC                 \  C=1 => candidate was never allowed
-    RTS
-    
-    
+        
 .count_cands
     JSR copy_cands
     LDA #0
@@ -1331,7 +1351,7 @@ ORG &6000
     RTS
     
 \  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH WHATEVER IS SEEN BY
-\  A DIGIT IN POSITION GIVEN BY X
+\  A POSITION GIVEN IN X
 
 .and_alt_seen
     LDA fix_pos
@@ -1550,6 +1570,168 @@ ORG &6000
     BPL tea_0
     TAY
     RTS
+
+\  REMOVE ALL CELLS FROM THE ALTERNATE SET THAT CANNOT CONTAIN A
+\  PARTICULAR DIGIT, GIVEN IN ACCUMULATOR
+
+.and_alt_digit
+    TAY                 \  Save the digit
+    LDA digit
+    PHA
+    STY digit
+    LDA var_pos
+    PHA
+    LDY #0
+    STY var_pos
+._aad_test
+    JSR get_alt_cell    \  See if cell is in alt set
+    BEQ _aad_not_in
+    LDX var_pos
+    LDA digit
+    JSR test_candidate  \  See if is a candidate
+    BNE _aad_not_in     \  Skip if cell *is* a candidate
+    LDY var_pos
+    JSR clr_alt_cell    \  Remove cell from alt set
+._aad_not_in
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _aad_test
+._aad_done
+    PLA
+    STA var_pos
+    PLA
+    STA digit
+    RTS
+
+\  INITIALISE THE ALTERNATE SET WITH ALL CELLS OUTSIDE THE MAIN SET, THAT
+\  CAN CONTAIN A DIGIT GIVEN IN THE ACCUMULATOR
+    
+.init_alt_digit
+    TAY                 \  Save the digit
+    \LDA digit
+    \PHA
+    STY digit
+    LDA var_pos
+    PHA
+    LDY #0
+    STY var_pos
+._iad_test
+    JSR get_set_cell
+    BNE _iad_clear      \  Clear cell if it is in main set
+    LDX var_pos
+    LDA digit
+    JSR test_candidate  \  See if is a candidate
+    BEQ _iad_clear
+._iad_set               \  Set cell in alternate set
+    LDY var_pos
+    JSR set_alt_cell
+    JMP _iad_next
+._iad_clear             \  Clear cell in alternate set
+    LDY var_pos
+    JSR clr_alt_cell
+._iad_next
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _iad_test
+._iad_done
+    PLA
+    STA var_pos
+    \PLA
+    \STA digit
+    RTS
+
+\  ORIGINAL BASIC
+\
+\ 4670DEFPROCelim_ext(D%)
+\ 4680LOCALA%,X%,Y%,I%,J%
+\ 4690PROCinit_alt_d(D%):PROCshow_alt(66)
+\ 4700FORI%=0TO80
+\ 4710IFFNcell(I%)=0GOTO4730
+\ 4720IFFNtest_cand(I%,D%)PROCand_seen(I%):PROCshow_alt(66):IFFNtest_alt=0I%=80
+\ 4730NEXT
+\ 4740IFFNtest_alt=0GOTO4780
+\ 4750FORI%=0TO80
+\ 4760IFFNalt(I%)PROCelim_cand(I%,D%)
+\ 4770NEXT
+\ 4780ENDPROC
+
+\ 4670DEFPROCelim_ext(D%)
+\ 4680LOCALA%,X%,Y%,I%,J%
+\ 4690PROCinit_alt_d(D%):PROCshow_alt(66)
+
+.elim_ext
+    STA digit           \  The digit we are eliminating
+    JSR init_alt_digit
+    LDY #66
+    JSR show_alt
+
+\ 4700FORI%=0TO80
+
+    LDY #0
+    STY var_pos
+
+\ 4710IFFNcell(I%)=0GOTO4730
+
+._elx_test
+    JSR get_set_cell
+    BEQ _elx_not_in
+
+\ 4720IFFNtest_cand(I%,D%)PROCand_seen(I%):PROCshow_alt(66):IFFNtest_alt=0I%=80
+
+    LDX var_pos
+    LDA digit
+    JSR test_candidate
+    BEQ _elx_not_in     \  Ignore non-candidates
+    LDX var_pos
+    JSR and_alt_seen    \  Strike out cells it does not see
+    LDY #66
+    JSR show_alt
+    JSR test_alt        \  See if any candidates remain ...
+    BEQ _elx_done       \  ... Skip if not
+
+\ 4730NEXT
+
+._elx_not_in
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _elx_test
+
+\ 4740IFFNtest_alt=0GOTO4780
+\  We have already tested this ...
+
+    JSR test_alt        \  See if any candidates remain ...
+    BEQ _elx_done       \  ... Skip if not
+
+\ 4750FORI%=0TO80
+
+    LDY #0
+    STY var_pos
+    
+\ 4760IFFNalt(I%)PROCelim_cand(I%,D%)
+
+._elx_elim
+    JSR get_alt_cell
+    BEQ _elx_no_elim
+    LDX var_pos
+    LDA digit
+    JSR eliminate_candidate
+
+\ 4770NEXT
+
+._elx_no_elim
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _elx_elim
+    
+\ 4780ENDPROC
+
+._elx_done
+    RTS
+
     
 
 \  DISPLAY A SINGLE DIGIT
