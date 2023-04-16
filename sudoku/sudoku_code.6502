@@ -119,6 +119,8 @@ ORG &6000
     JMP init_alt_digit
 .ext_elim_ext
     JMP elim_ext
+.ext_eliminate_all
+    JMP eliminate_all
 \    .ext_set_pmk
 \        JMP set_pmk
 \    .ext_clr_pmk
@@ -1320,6 +1322,8 @@ ORG &6000
 \           alt-ptr,alt_ptr+1 => SET TO DISPLAY
 
 .show_alt
+    LDA var_pos
+    PHA
     STY pixelY
     LDA #0
     STA var_pos
@@ -1335,19 +1339,27 @@ ORG &6000
     PLP                 \  Retrieve Z flag
     BEQ _sha_0
     JSR set_pixel
+\    LDA #42             \  "*"
+\    JSR oswrch
+\    JMP _sha_next
     BNE _sha_next       \  Will always branch
 ._sha_0
     JSR clr_pixel
+\    LDA #46             \  "."
+\    JSR oswrch
 ._sha_next
     INC var_pos
     INC pixelX
     LDA pixelX
     CMP #77
     BCC _sha_col
+\    JSR osnewl
     INC pixelY
     LDA var_pos
     CMP #81
     BCC _sha_row
+    PLA
+    STA var_pos
     RTS
     
 \  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH WHATEVER IS SEEN BY
@@ -1568,7 +1580,19 @@ ORG &6000
     ORA (alt_ptr), Y    \  Any ones will stick in A
     DEY
     BPL tea_0
-    TAY
+\    PHP
+\    TAY                 \  We care whether or not Y=0
+\    BEQ _tea_empty
+\    JSR say
+\    EQUS "Not "
+\    BRK
+\._tea_empty
+\    JSR say
+\    EQUS "empty."
+\    BRK
+\    JSR osnewl
+\    PLP
+    TAY                 \  Make sure A is last thing seen
     RTS
 
 \  REMOVE ALL CELLS FROM THE ALTERNATE SET THAT CANNOT CONTAIN A
@@ -1617,6 +1641,9 @@ ORG &6000
     LDY #0
     STY var_pos
 ._iad_test
+\    LDX var_pos
+\    JSR disp_pos
+    LDY var_pos         \  needs to be in Y for this
     JSR get_set_cell
     BNE _iad_clear      \  Clear cell if it is in main set
     LDX var_pos
@@ -1626,16 +1653,21 @@ ORG &6000
 ._iad_set               \  Set cell in alternate set
     LDY var_pos
     JSR set_alt_cell
+\    LDA #121            \  "y"
+\    JSR oswrch
     JMP _iad_next
 ._iad_clear             \  Clear cell in alternate set
     LDY var_pos
     JSR clr_alt_cell
+\    LDA #110            \  "n"
+\    JSR oswrch
 ._iad_next
     INC var_pos
     LDY var_pos
     CPY #81
     BCC _iad_test
 ._iad_done
+    \JSR osnewl
     PLA
     STA var_pos
     \PLA
@@ -1681,8 +1713,19 @@ ORG &6000
 \ 4720IFFNtest_cand(I%,D%)PROCand_seen(I%):PROCshow_alt(66):IFFNtest_alt=0I%=80
 
     LDX var_pos
+\    JSR disp_pos
     LDA digit
     JSR test_candidate
+\    PHP
+\    BEQ _elx_n
+\    LDA #121            \  "y"
+\    JSR oswrch
+\    JMP _elx_a
+\._elx_n
+\    LDA #110            \  "n"
+\    JSR oswrch
+\._elx_a
+\    PLP
     BEQ _elx_not_in     \  Ignore non-candidates
     LDX var_pos
     JSR and_alt_seen    \  Strike out cells it does not see
@@ -1695,6 +1738,12 @@ ORG &6000
 
 ._elx_not_in
     INC var_pos
+\    LDX var_pos
+\    JSR disp_pos
+\    LDA #58             \  colon
+\    JSR oswrch
+\    LDA var_pos
+\    JSR disp_hex_byte
     LDY var_pos
     CPY #81
     BCC _elx_test
@@ -1702,8 +1751,13 @@ ORG &6000
 \ 4740IFFNtest_alt=0GOTO4780
 \  We have already tested this ...
 
-    JSR test_alt        \  See if any candidates remain ...
-    BEQ _elx_done       \  ... Skip if not
+    \JSR say
+    \EQUS "Search done"
+    \BRK
+    \JSR osnewl
+
+\    JSR test_alt        \  See if any candidates remain ...
+\    BEQ _elx_done       \  ... Skip if not
 
 \ 4750FORI%=0TO80
 
@@ -1732,7 +1786,32 @@ ORG &6000
 ._elx_done
     RTS
 
-    
+\  ELIMINATE INWARDS OR OUTWARDS FROM ALL CELLS IN THE GRID
+
+.eliminate_all
+    LDX #0
+    STX var_pos
+._ela_pos
+    JSR test_solved
+    BEQ _ela_not_solved
+.ela_solved
+    LDX var_pos
+    LDA cands_89v, X
+    JSR elim_out        \  Eliminate candidates it sees
+    JMP _ela_any
+._ela_not_solved
+    JSR elim_in         \  Eliminate anything seen as candidate
+    LDX var_pos
+._ela_any
+    INC var_pos
+    LDA solved          \  Terminate loop early if puzzle is finished
+    CMP #81
+    BCS _ela_done
+    LDX var_pos
+    CPX #81
+    BCC _ela_pos
+._ela_done
+    RTS
 
 \  DISPLAY A SINGLE DIGIT
 

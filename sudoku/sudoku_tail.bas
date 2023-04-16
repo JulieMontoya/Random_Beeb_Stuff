@@ -92,6 +92,9 @@
  3060PROCtally_set:PROCtally
  3070FORD%=1TO9
  3080IFcand_count?D%=1PRINT;D%;" in R";R%+1;" has one home!":PROCfill_set(D%)
+ 3082IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3090
+ 3084PRINT;D%;" in R";R%+1;" has ";cand_count?D%;" homes."
+ 3085PROCelim_ext(D%)
  3090IF?solved=81D%=9:R%=9:C%=9
  3100NEXT
  3110M%=M%+11:NEXT
@@ -101,6 +104,7 @@
  3150PROCtally_set:PROCtally
  3160FORD%=1TO9
  3170IFD%?cand_count=1PRINT;D%;" in C";C%+1;" has one home!":PROCfill_set(D%)
+ 3172IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in C";C%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
  3180IF?solved=81D%=9:R%=9:C%=9
  3190NEXT
  3200M%=M%+11:NEXT
@@ -110,11 +114,13 @@
  3240PROCtally_set:PROCtally
  3250FORD%=1TO9
  3260IFD%?cand_count=1PRINT;D%;" in B";B%+1;" has one home!":PROCfill_set(D%)
- 3270IF?solved=81D%=9:R%=9:C%=9
+ 3262IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in B";B%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
+ 3270IF?solved=81D%=9:R%=9:C%=9:B%=9
  3280NEXT
  3290M%=M%+11:NEXT
  3300UNTIL?solved=81OR?solved=os%
  3310PRINT"Finished (";?solved;"/81) in ";(TIME-T%)/100;" sec."
+ 3315*SP.
  3320END
  4000DEFFNsolved(X%)=USRtest_solved AND&F
  4010DEFPROCdisp_pos(X%)
@@ -176,6 +182,35 @@
  4570B%=B%DIV2:NEXT
  4580PRINTSTRING$(J%," ")
  4590ENDPROC
+ 4600DEFPROCinit_alt1
+ 4610CALLinit_alt1:ENDPROC
+ 4620DEFPROCshow_alt(Y%)
+ 4630CALLshow_alt:ENDPROC
+ 4640DEFPROCand_seen(X%)
+ 4650CALLand_seen:ENDPROC
+ 4660DEFFNtest_alt=(USRtest_alt AND&2000000)=0
+ 4670DEFPROCman_elim_ext(D%)
+ 4680LOCALA%,X%,Y%,I%,J%
+ 4690PROCinit_alt_d(D%):PROCshow_alt(66)
+ 4700FORI%=0TO80
+ 4710IFFNcell(I%)=0GOTO4730
+ 4720IFFNtest_cand(I%,D%)PROCand_seen(I%):PROCshow_alt(66):IFFNtest_alt=0I%=80
+ 4730NEXT
+ 4740IFFNtest_alt=0GOTO4780
+ 4750FORI%=0TO80
+ 4760IFFNalt(I%)PROCelim_cand(I%,D%)
+ 4770NEXT
+ 4780ENDPROC
+ 4800DEFFNalt(Y%)
+ 4810LOCALU%:U%=USRget_alt:=(U%AND&2000000)=0
+ 4820DEFPROCelim_cand(X%,A%)
+ 4830CALLelim_cand:ENDPROC
+ 4840DEFPROCand_digit(A%)
+ 4850CALLand_digit:ENDPROC
+ 4860DEFPROCinit_alt_d(A%)
+ 4870CALLinit_alt_d:ENDPROC
+ 4880DEFPROCelim_ext(A%)
+ 4890CALLelim_ext:ENDPROC
  8000DATA0,0,0,2,0,0,6,0,0
  8010DATA0,5,0,9,0,0,0,7,0
  8020DATA0,1,0,0,8,0,5,0,0
@@ -185,6 +220,24 @@
  8060DATA0,0,0,8,9,0,0,0,0
  8070DATA0,0,0,0,0,0,0,5,0
  8080DATA9,0,1,4,0,7,0,0,0
+ 9000DATA9,6,0,0,8,0,0,4,0
+ 9010DATA0,0,0,0,0,0,0,0,0
+ 9020DATA4,0,0,0,0,6,7,0,8
+ 9030DATA0,0,9,0,0,7,0,5,3
+ 9040DATA0,0,0,0,6,0,0,2,0
+ 9050DATA0,2,0,0,0,5,0,0,0
+ 9060DATA1,0,0,9,4,0,0,8,0
+ 9070DATA8,5,0,0,0,0,0,1,4
+ 9080DATA0,0,0,0,5,0,0,0,7
+ 9100DATA1,0,2,0,0,0,5,0,3
+ 9110DATA0,0,0,9,0,8,0,0,0
+ 9120DATA0,3,0,0,0,0,0,4,0
+ 9130DATA0,9,0,0,8,0,7,0,0
+ 9140DATA0,0,0,5,0,9,0,0,0
+ 9150DATA0,0,3,0,4,0,0,1,0
+ 9160DATA0,7,0,0,0,0,0,5,0
+ 9170DATA0,0,0,2,0,1,0,0,0
+ 9180DATA8,0,9,0,0,0,6,0,7
 10000REM.. T.EL0001 ..
 10010DATA0,0,3,0,0,0,0,8,0
 10020DATA0,5,0,1,0,0,0,0,6

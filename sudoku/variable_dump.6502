@@ -40,3 +40,4 @@ PRINT "get_alt=",~ext_get_alt_cell
 PRINT "and_digit=",~ext_and_alt_digit
 PRINT "init_alt_d=",~ext_init_alt_digit
 PRINT "elim_ext=",~ext_elim_ext
+PRINT "elim_all=",~ext_eliminate_all
