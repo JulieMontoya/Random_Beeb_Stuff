@@ -1,4 +1,4 @@
-  900CALLreset_grid
+  900CALLreset_grid:PROCpoke(alt_ptr,grp_map-&80)
   910END
  1000PROCginit
  1010PROChelp
