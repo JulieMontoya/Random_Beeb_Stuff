@@ -11,13 +11,17 @@ the intersection of their vision maps)  cannot contain that digit.
 
 ## OUTWARD ELIMINATION
 
-**Outward elimination** is the process of eliminating a candidate from
-every cell in the vision map of a solved cell containing that digit.
+**Outward elimination** is the process of eliminating a digit as a
+candidate from every cell in the vision map of a solved cell which
+contains that digit.
 
 ## INWARD ELIMINATION
 
-**Inward elimination** is the process of eliminating as candidates from
-an unsolved cell, the values of all solved cells in its vision map.
+**Inward elimination** is the process of eliminating as candidates from an
+unsolved cell, the digits in all solved cells in its vision map.
+
+The process may terminate early if a cell becomes reduced to one remaining
+candidate.
 
 # OVERALL STRATEGY
 
@@ -31,4 +35,5 @@ into the grid as solved and perform an outward elimination.
 If the digit has two or three possible places within the group, we take
 the intersection of their vision maps with the complement of the group;
 and if this is not empty, we eliminate that digit from any cells in that
-intersection.
+intersection.  This process may terminate early if the intersection
+becomes empty.

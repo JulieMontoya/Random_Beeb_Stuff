@@ -97,7 +97,7 @@
  3085PROCelim_ext(D%)
  3090IF?solved=81D%=9:R%=9:C%=9
  3100NEXT
- 3110M%=M%+11:NEXT
+ 3110M%=M%+13:NEXT
  3120IF?solved=81GOTO3300
  3130FORC%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying C";C%+1:PROCshow_set(57)
  3140PROCelim_set
@@ -107,7 +107,7 @@
  3172IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in C";C%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
  3180IF?solved=81D%=9:R%=9:C%=9
  3190NEXT
- 3200M%=M%+11:NEXT
+ 3200M%=M%+13:NEXT
  3210IF?solved=81GOTO3300
  3220FORB%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying B";B%+1:PROCshow_set(57)
  3230PROCelim_set
@@ -117,7 +117,7 @@
  3262IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in B";B%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
  3270IF?solved=81D%=9:R%=9:C%=9:B%=9
  3280NEXT
- 3290M%=M%+11:NEXT
+ 3290M%=M%+13:NEXT
  3300UNTIL?solved=81OR?solved=os%
  3310PRINT"Finished (";?solved;"/81) in ";(TIME-T%)/100;" sec."
  3315*SP.

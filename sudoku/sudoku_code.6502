@@ -14,6 +14,10 @@ preload         = &82
 multiplicand    = &84
 product         = &80
 
+tens            = &80
+units           = &81
+hundreds        = &82
+
 tempX           = &86
 tempY           = &87
 pixelX          = &88   \  Pixel X co-ordinate 0..77
@@ -119,31 +123,24 @@ ORG &6000
     JMP init_alt_digit
 .ext_elim_ext
     JMP elim_ext
+.ext_disp_group
+    JMP disp_group
 .ext_eliminate_all
     JMP eliminate_all
-\    .ext_set_pmk
-\        JMP set_pmk
-\    .ext_clr_pmk
-\        JMP clr_pmk
-\    .ext_toggle_pmk
-\        JMP toggle_pmk
-\    .ext_calc_digit_pos
-\        JMP calc_digit_pos
-\    .ext_calc_pmk_pos
-\        JMP calc_pmk_pos
-\    .ext_divide_by_3
-\        JMP divide_by_3
-\    .ext_multiply
-\        JMP mult16
-\    .ext_set_digit_colour
-\        JMP set_digit_colour
-\    .ext_set_see
-\        JMP set_see
-\    .ext_clr_see
-\        JMP clr_see
-\    .ext_calc_see_pos
-\        JMP calc_see_pos
-    
+.ext_init_alt_candidate
+    JMP init_alt_candidate
+.ext_tally_rows
+    JMP tally_rows
+.ext_tally_columns
+    JMP tally_columns
+
+\  BLUERIZLAGIRL'S SUPER FAST DIVISION SUBROUTINE
+\
+\  AS LONG AS WE ARE DIVIDING SOMETHING <= 255 BY AN ODD NUMBER, WE CAN
+\  START WITH THE DIVISOR SHIFTED ALL THE WAY LEFT; TRY TO SUBTRACT IT
+\  FROM THE DIVIDEND; SHIFT 1 OR 0 LEFT INTO QUOTIENT; SHIFT THE DIVISOR
+\  RIGHT; AND KEEP GOING TILL 1 GETS SHIFTED OUT.
+
 .divide_by_3
     LDY #&C0
     STY divisor
@@ -172,7 +169,7 @@ ORG &6000
     \  Begin by shifting the multiplier right so its lowest bit is already
     \  in the carry flag.
     LDY #17             \  one more than we need
-    BNE _mult16_3      \  always branches; A = 0
+    BNE _mult16_3       \  always branches; A = 0
 ._mult16_1
     BCC _mult16_2
     \  Add the multiplicand to the high word of the product
@@ -1406,6 +1403,13 @@ ORG &6000
 .tally_set
     JSR reset_tally     \  This will leave 0 in A
     STA var_pos
+    JSR say
+    EQUS "Tallying "
+    BRK
+    JSR disp_group
+    LDA #58             \  colon
+    JSR oswrch
+    
 ._tys_pos
     LDY var_pos
     JSR get_set_cell    \  See if cell is in set
@@ -1417,7 +1421,18 @@ ORG &6000
     LDA var_pos
     CMP #81
     BCC _tys_pos
-    RTS
+    LDX #0
+._tys_disp
+    LDA cand_count, X
+    JSR disp_digit
+    CPX #9
+    BCS _tys_done
+    LDA #32
+    JSR oswrch
+    INX
+    BNE _tys_disp
+._tys_done
+    JMP osnewl
 
 .fill_set
     STA digit
@@ -1435,15 +1450,20 @@ ORG &6000
     BEQ _fis_not_in
 
     LDA digit
-    CLC
-    ADC #48
-    JSR oswrch
+    \CLC
+    \ADC #48
+    \JSR oswrch
+    JSR disp_digit
+    JSR say
+    EQUS " in "
+    BRK
+    JSR disp_group
     JSR say
     EQUS " can only go in "
     BRK
     LDX var_pos
     JSR disp_pos
-    LDA #46
+    LDA #33             \  "!"
     JSR oswrch
     JSR osnewl
     
@@ -1761,6 +1781,17 @@ ORG &6000
 
 \ 4750FORI%=0TO80
 
+    \LDA digit
+    \JSR disp_digit
+    \JSR say
+    \EQUS " anywhere in "
+    \BRK
+    \JSR disp_group
+    \JSR say
+    \EQUS " sees:"
+    \BRK
+    \JSR osnewl
+    
     LDY #0
     STY var_pos
     
@@ -1769,6 +1800,22 @@ ORG &6000
 ._elx_elim
     JSR get_alt_cell
     BEQ _elx_no_elim
+
+    LDA digit
+    JSR disp_digit
+    JSR say
+    EQUS " anywhere in "
+    BRK
+    JSR disp_group
+    JSR say
+    EQUS " sees "
+    BRK
+    LDX var_pos
+    JSR disp_pos
+    LDA #46
+    JSR oswrch
+    JSR osnewl
+
     LDX var_pos
     LDA digit
     JSR eliminate_candidate
@@ -1786,6 +1833,16 @@ ORG &6000
 ._elx_done
     RTS
 
+\  DISPLAY GROUP NAME
+
+.disp_group
+    LDY #11
+    LDA (set_ptr), Y
+    JSR oswrch
+    INY
+    LDA (set_ptr), Y
+    JMP oswrch
+    
 \  ELIMINATE INWARDS OR OUTWARDS FROM ALL CELLS IN THE GRID
 
 .eliminate_all
@@ -1813,6 +1870,130 @@ ORG &6000
 ._ela_done
     RTS
 
+\  INITIALISE THE ALTERNATE SET WITH ALL CELLS THAT CAN CONTAIN A DIGIT
+\  GIVEN IN THE ACCUMULATOR
+    
+.init_alt_candidate
+    STA digit
+    LDA var_pos
+    PHA
+    LDX #0
+    STX var_pos
+._iac_test
+    LDA digit
+    JSR test_candidate  \  See if is a candidate
+    BEQ _iac_clear
+._iac_set               \  Set cell in alternate set
+    LDY var_pos
+    JSR set_alt_cell
+    JMP _iac_next
+._iac_clear             \  Clear cell in alternate set
+    LDY var_pos
+    JSR clr_alt_cell
+._iac_next
+    INC var_pos
+    LDX var_pos
+    CPX #81
+    BCC _iac_test
+._iac_done
+    PLA
+    STA var_pos
+    RTS
+
+\  TALLY CELLS IN THE ALT SET, BY ROW
+
+.tally_rows
+    JSR reset_tally     \  This will leave 0 in A
+    STA var_pos
+    STA pixelY          \  This will count the rows
+._tyr_row
+    LDA #0
+    STA pixelX          \  This will count the columns
+._tyr_col
+    LDY var_pos
+    JSR get_alt_cell
+    BEQ _tyr_not_in
+._tyr_in
+    LDX pixelY          \  Current row
+    INC cand_count, X
+._tyr_not_in
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #9
+    BCC _tyr_col        \  Loop till end of row
+    LDA var_pos
+    CMP #81             \  Exit if we have reached end of grid
+    BCS _tyr_done
+    INC pixelY
+    BNE _tyr_row        \  Not expected to fall through
+._tyr_done
+    RTS
+    
+\  TALLY CELLS IN THE ALT SET, BY ROW
+
+.tally_columns
+    JSR reset_tally     \  This will leave 0 in A
+    STA var_pos
+    STA pixelY          \  This will count the rows
+._tyc_row
+    LDA #0
+    STA pixelX          \  This will count the columns
+._tyc_col
+    LDY var_pos
+    JSR get_alt_cell
+    BEQ _tyc_not_in
+._tyc_in
+    LDX pixelX          \  Current column
+    INC cand_count, X
+._tyc_not_in
+    INC var_pos
+    INC pixelX
+    LDA pixelX
+    CMP #9
+    BCC _tyc_col        \  Loop till end of row
+    LDA var_pos
+    CMP #81             \  Exit if we have reached end of grid
+    BCS _tyc_done
+    INC pixelY
+    BNE _tyr_row        \  Not expected to fall through
+._tyc_done
+    RTS
+    
+
+\  DISPLAY A MULTI-DIGIT DECIMAL NUMBER
+\
+\  Fast division only works for odd divisors!  
+.disp_dec
+    LSR A               \  Now we have A DIV 2 and C=A MOD 2
+    PHP                 \  Save the carry flag
+    LDX #&A0
+    STX divisor
+    JSR fast_divide     \  Now we have A DIV 10
+    STY units           \  This is (A DIV 2) MOD 5
+    PLP                 \  Retrieve C from before
+    ROL units           \  Now we have 2 * ((A DIV 2) MOD 5) + A MOD 2 ...
+                        \  ... which is equivalent to A MOD 10
+    STA tens
+    BEQ _dd_no_10s      \  Skip straight to units if no tens
+    CMP #10
+    BCC _dd_no_100s     \  Skip straight to tens if no hundreds
+    LDX #0
+    STX hundreds
+._dd_hund
+    SEC
+    SBC #10
+    STA tens
+    INC hundreds
+    CMP #10
+    BCS _dd_hund
+    LDA hundreds
+    JSR disp_digit
+._dd_no_100s
+    LDA tens
+    JSR disp_digit
+._dd_no_10s
+    LDA units
 \  DISPLAY A SINGLE DIGIT
 
 .disp_digit
@@ -1832,6 +2013,7 @@ ORG &6000
     JSR oswrch
     PLA
     RTS
+
 
 .say
     PHP                 \  Stash everything on the 6502 stack
@@ -2003,43 +2185,112 @@ ORG &7680
 
 .group_map
     EQUB&FF:EQUB&80:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&7F:EQUB&C0:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00 \ R1
+    EQUS "R1"
+    
+    EQUB&00:EQUB&7F:EQUB&C0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00 \ R2
+    EQUS "R2"
+    
+    EQUB&00:EQUB&00:EQUB&3F:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00 \ R3
+    EQUS "R3"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&1F:EQUB&F0:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "R4"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&0F:EQUB&F8:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "R5"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&07:EQUB&FC:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "R6"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&FE
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "R7"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&01
+    EQUB&FF:EQUB&00:EQUB&00
+    EQUS "R8"
+    
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&3F:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&1F:EQUB&F0:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&0F:EQUB&F8:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&07:EQUB&FC:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&03:EQUB&FE:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&01:EQUB&FF:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&FF:EQUB&80:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
-    EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&00:EQUB&40:EQUB&20
+    EQUB&00:EQUB&FF:EQUB&80 \ R9
+    EQUS "R9"
+    
+    EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01
+    EQUB&00:EQUB&80:EQUB&00 \ C1
+    EQUS "C1"
+    
+    EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00
+    EQUB&80:EQUB&40:EQUB&00
+    EQUS "C2"
+    
+    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80
+    EQUB&40:EQUB&20:EQUB&00
+    EQUS "C3"
+    
     EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
-    EQUB&00:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00
-    EQUB&80:EQUB&40:EQUB&20:EQUB&00:EQUB&10:EQUB&08:EQUB&04:EQUB&02
-    EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&00:EQUB&08
+    EQUB&20:EQUB&10:EQUB&00
+    EQUS "C4"
+    
+    EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20
+    EQUB&10:EQUB&08:EQUB&00
+    EQUS "C5"
+    
     EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10
-    EQUB&08:EQUB&00:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40
-    EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&00:EQUB&02:EQUB&01:EQUB&00
-    EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&00
+    EQUB&08:EQUB&04:EQUB&00
+    EQUS "C6"
+    
+    EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
+    EQUB&04:EQUB&02:EQUB&00
+    EQUS "C7"
+    
     EQUB&01:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04
-    EQUB&02:EQUB&01:EQUB&00:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10
-    EQUB&08:EQUB&04:EQUB&02:EQUB&01:EQUB&00:EQUB&80:EQUB&E0:EQUB&70
-    EQUB&38:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81:EQUB&C0:EQUB&E0
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81:EQUB&C0
-    EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&70:EQUB&38:EQUB&1C:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&02:EQUB&01:EQUB&00
+    EQUS "C8"
+    
+    EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08:EQUB&04:EQUB&02
+    EQUB&01:EQUB&00:EQUB&80 \ C9
+    EQUS "C9"
+    
+    EQUB&E0:EQUB&70:EQUB&38:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00 \ B1
+    EQUS "B1"
+    
+    EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "B2"
+    
+    EQUB&03:EQUB&81:EQUB&C0:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "B3"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&1C:EQUB&0E:EQUB&07:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "B4"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81:EQUB&C0:EQUB&E0:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "B5"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&70:EQUB&38:EQUB&1C:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "B6"
+    
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&03:EQUB&81
-    EQUB&C0:EQUB&E0:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&70:EQUB&38:EQUB&1C:EQUB&00:EQUB&00:EQUB&00
-    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&0E:EQUB&07:EQUB&03
-    EQUB&80
+    EQUB&C0:EQUB&E0:EQUB&00
+    EQUS "B7"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&70
+    EQUB&38:EQUB&1C:EQUB&00
+    EQUS "B8"
+    
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&0E
+    EQUB&07:EQUB&03:EQUB&80 \ B9
+    EQUS "B9"
 
 ORG &7800
 
