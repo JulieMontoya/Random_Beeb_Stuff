@@ -84,44 +84,46 @@
  2110NEXT
  2120PRINT'"Press"CHR$129"f3"CHR$135"to solve puzzle.":END
  3000T%=TIME
+ 3005IFW%W%=FALSE:*SP.O.SOLVE
  3010REPEAT
  3020os%=?solved
  3030M%=grp_map
- 3040FORR%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying R";R%+1:PROCshow_set(57)
+ 3040FORR%=0TO8:PROCpoke(set_ptr,M%):PROCshow_set(57)
  3050PROCelim_set
- 3060PROCtally_set:PROCtally
+ 3060PROCtally_set
  3070FORD%=1TO9
- 3080IFcand_count?D%=1PRINT;D%;" in R";R%+1;" has one home!":PROCfill_set(D%)
- 3082IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3090
- 3084PRINT;D%;" in R";R%+1;" has ";cand_count?D%;" homes."
- 3085PROCelim_ext(D%)
- 3090IF?solved=81D%=9:R%=9:C%=9
- 3100NEXT
- 3110M%=M%+13:NEXT
- 3120IF?solved=81GOTO3300
- 3130FORC%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying C";C%+1:PROCshow_set(57)
- 3140PROCelim_set
- 3150PROCtally_set:PROCtally
- 3160FORD%=1TO9
- 3170IFD%?cand_count=1PRINT;D%;" in C";C%+1;" has one home!":PROCfill_set(D%)
- 3172IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in C";C%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
- 3180IF?solved=81D%=9:R%=9:C%=9
- 3190NEXT
- 3200M%=M%+13:NEXT
- 3210IF?solved=81GOTO3300
- 3220FORB%=0TO8:PROCpoke(set_ptr,M%):PRINT"Tallying B";B%+1:PROCshow_set(57)
- 3230PROCelim_set
- 3240PROCtally_set:PROCtally
- 3250FORD%=1TO9
- 3260IFD%?cand_count=1PRINT;D%;" in B";B%+1;" has one home!":PROCfill_set(D%)
- 3262IFcand_count?D%=2ORcand_count?D%=3PRINT;D%;" in B";B%+1;" has ";cand_count?D%;" homes.":PROCelim_ext(D%)
- 3270IF?solved=81D%=9:R%=9:C%=9:B%=9
- 3280NEXT
- 3290M%=M%+13:NEXT
- 3300UNTIL?solved=81OR?solved=os%
- 3310PRINT"Finished (";?solved;"/81) in ";(TIME-T%)/100;" sec."
- 3315*SP.
- 3320END
+ 3080IFcand_count?D%=1PROCfill_set(D%)
+ 3090IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3120
+ 3110PROCelim_ext(D%)
+ 3120IF?solved=81D%=9:R%=9:C%=9
+ 3130NEXT
+ 3140M%=M%+13:NEXT
+ 3150IF?solved=81GOTO3390
+ 3160FORC%=0TO8:PROCpoke(set_ptr,M%):PROCshow_set(57)
+ 3170PROCelim_set
+ 3180PROCtally_set
+ 3190FORD%=1TO9
+ 3200IFD%?cand_count=1PROCfill_set(D%)
+ 3210IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3240
+ 3230PROCelim_ext(D%)
+ 3240IF?solved=81D%=9:R%=9:C%=9
+ 3250NEXT
+ 3260M%=M%+13:NEXT
+ 3270IF?solved=81GOTO3390
+ 3280FORB%=0TO8:PROCpoke(set_ptr,M%):PROCshow_set(57)
+ 3290PROCelim_set
+ 3300PROCtally_set
+ 3310FORD%=1TO9
+ 3320IFD%?cand_count=1PROCfill_set(D%)
+ 3330IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3360
+ 3350PROCelim_ext(D%)
+ 3360IF?solved=81D%=9:R%=9:C%=9:B%=9
+ 3370NEXT
+ 3380M%=M%+13:NEXT
+ 3390UNTIL?solved=81OR?solved=os%
+ 3400PRINT"Finished (";?solved;"/81) in ";(TIME-T%)/100;" sec."
+ 3410*SP.
+ 3420END
  4000DEFFNsolved(X%)=USRtest_solved AND&F
  4010DEFPROCdisp_pos(X%)
  4020CALLdisp_pos:ENDPROC
@@ -211,6 +213,11 @@
  4870CALLinit_alt_d:ENDPROC
  4880DEFPROCelim_ext(A%)
  4890CALLelim_ext:ENDPROC
+ 4900DEFPROCdisp_grp
+ 4910CALLdisp_grp:ENDPROC
+ 4920DEFPROCshow_rcs
+ 4930LOCALI%:FORI%=0TO8:PRINTFNhex(I%?pos07,2);FNhex(I%?pos8,2);" ";:NEXT
+ 4940PRINT:ENDPROC
  8000DATA0,0,0,2,0,0,6,0,0
  8010DATA0,5,0,9,0,0,0,7,0
  8020DATA0,1,0,0,8,0,5,0,0
@@ -220,6 +227,16 @@
  8060DATA0,0,0,8,9,0,0,0,0
  8070DATA0,0,0,0,0,0,0,5,0
  8080DATA9,0,1,4,0,7,0,0,0
+ 8500REM..TATOOINE SUNSET..
+ 8510DATA0,0,0,0,0,0,0,0,0
+ 8520DATA0,0,9,8,0,0,0,0,7
+ 8530DATA0,8,0,0,6,0,0,5,0
+ 8540DATA0,5,0,0,4,0,0,3,0
+ 8550DATA0,0,7,9,0,0,0,0,2
+ 8560DATA0,0,0,0,0,0,0,0,0
+ 8570DATA0,0,2,7,0,0,0,0,9
+ 8580DATA0,4,0,0,5,0,0,6,0
+ 8590DATA3,0,0,0,0,6,2,0,0
  9000DATA9,6,0,0,8,0,0,4,0
  9010DATA0,0,0,0,0,0,0,0,0
  9020DATA4,0,0,0,0,6,7,0,8

@@ -5,6 +5,11 @@ text_ptr        = &74   \  Text pointer for printing
 set_ptr         = &76   \  Main set pointer
 alt_ptr         = &78   \  Alternate set pointer for 2-way set operations
 
+pos1            = &7C
+pos2            = &7D
+pos3            = &7E
+pos4            = &7F
+
 remainder       = &81   \  For dodgy fast division routine, or scratch
 divisor         = &82
 quotient        = &80
@@ -46,7 +51,7 @@ E_NOT_ALLOWED   = 51
 \  WILL COMMENT OUT DEBUGGING CODE FOR NOW RATHER THAN REMOVE IT ALTOGETHER
 \  JUST IN CASE .....
 
-
+GUARD &7C00
 ORG &6000
 
 .code_begin
@@ -127,8 +132,8 @@ ORG &6000
     JMP disp_group
 .ext_eliminate_all
     JMP eliminate_all
-.ext_init_alt_candidate
-    JMP init_alt_candidate
+.ext_init_set_candidate
+    JMP init_set_candidate
 .ext_tally_rows
     JMP tally_rows
 .ext_tally_columns
@@ -1403,12 +1408,12 @@ ORG &6000
 .tally_set
     JSR reset_tally     \  This will leave 0 in A
     STA var_pos
-    JSR say
-    EQUS "Tallying "
-    BRK
-    JSR disp_group
-    LDA #58             \  colon
-    JSR oswrch
+\    JSR say
+\    EQUS "Tallying "
+\    BRK
+\    JSR disp_group
+\    LDA #58             \  colon
+\    JSR oswrch
     
 ._tys_pos
     LDY var_pos
@@ -1421,18 +1426,19 @@ ORG &6000
     LDA var_pos
     CMP #81
     BCC _tys_pos
-    LDX #0
-._tys_disp
-    LDA cand_count, X
-    JSR disp_digit
-    CPX #9
-    BCS _tys_done
-    LDA #32
-    JSR oswrch
-    INX
-    BNE _tys_disp
-._tys_done
-    JMP osnewl
+    RTS
+\    LDX #0
+\._tys_disp
+\    LDA cand_count, X
+\    JSR disp_digit
+\    CPX #9
+\    BCS _tys_done
+\    LDA #32
+\    JSR oswrch
+\    INX
+\    BNE _tys_disp
+\._tys_done
+\    JMP osnewl
 
 .fill_set
     STA digit
@@ -1848,7 +1854,7 @@ ORG &6000
 .eliminate_all
     LDX #0
     STX var_pos
-._ela_pos
+._elf_pos
     JSR test_solved
     BEQ _ela_not_solved
 .ela_solved
@@ -1863,59 +1869,86 @@ ORG &6000
     INC var_pos
     LDA solved          \  Terminate loop early if puzzle is finished
     CMP #81
-    BCS _ela_done
+    BCS _elf_done
     LDX var_pos
     CPX #81
-    BCC _ela_pos
-._ela_done
+    BCC _elf_pos
+._elf_done
     RTS
 
-\  INITIALISE THE ALTERNATE SET WITH ALL CELLS THAT CAN CONTAIN A DIGIT
+\  INITIALISE THE MAIN SET WITH ALL CELLS THAT CAN CONTAIN A DIGIT
 \  GIVEN IN THE ACCUMULATOR
     
-.init_alt_candidate
+.init_set_candidate
     STA digit
+    ASL A               \  Double it
+    TAX
+    DEX                 \  Allow for offset
+    DEX
+    LDA cand_sets, X
+    STA set_ptr
+    LDA cand_sets+1, X
+    STA set_ptr+1
     LDA var_pos
     PHA
     LDX #0
     STX var_pos
-._iac_test
+._isc_test
     LDA digit
+    AND #&7F            \  Ignore column flag
     JSR test_candidate  \  See if is a candidate
-    BEQ _iac_clear
-._iac_set               \  Set cell in alternate set
+    BEQ _isc_clear
+._isc_set               \  Set cell in main set
     LDY var_pos
-    JSR set_alt_cell
-    JMP _iac_next
-._iac_clear             \  Clear cell in alternate set
+    JSR set_set_cell
+    JMP _isc_next
+._isc_clear             \  Clear cell in main set
     LDY var_pos
-    JSR clr_alt_cell
-._iac_next
+    JSR clr_set_cell
+._isc_next
     INC var_pos
     LDX var_pos
     CPX #81
-    BCC _iac_test
-._iac_done
+    BCC _isc_test
+._isc_done
     PLA
     STA var_pos
     RTS
 
-\  TALLY CELLS IN THE ALT SET, BY ROW
+\  TALLY CELLS IN THE MAIN SET, BY ROW
 
 .tally_rows
     JSR reset_tally     \  This will leave 0 in A
     STA var_pos
     STA pixelY          \  This will count the rows
+    LDX #8              \  Clear the individual row counts
+._tyr_clr_0
+    STA position_07, X
+    STA position_8, X
+    DEX
+    BPL _tyr_clr_0
 ._tyr_row
     LDA #0
     STA pixelX          \  This will count the columns
 ._tyr_col
     LDY var_pos
-    JSR get_alt_cell
+    JSR get_set_cell
     BEQ _tyr_not_in
 ._tyr_in
     LDX pixelY          \  Current row
     INC cand_count, X
+    LDY pixelX
+    CPX #8
+    BCS _tyr_in_8
+._tyr_in_07             \  Set a bit in columns 1-8 of the row
+    LDA position_07, X
+    ORA bits_HL, Y
+    STA position_07, X
+    BNE _tyr_not_in     \  Will always branch
+._tyr_in_8              \  Set a bit in column 9 of the row
+    LDA position_8, X
+    ORA bits_HL-8, Y
+    STA position_8, X
 ._tyr_not_in
     INC var_pos
     INC pixelX
@@ -1928,24 +1961,45 @@ ORG &6000
     INC pixelY
     BNE _tyr_row        \  Not expected to fall through
 ._tyr_done
+    LDA digit
+    AND #&7F            \  Clear "column" flag
+    STA digit
     RTS
     
-\  TALLY CELLS IN THE ALT SET, BY ROW
+\  TALLY CELLS IN THE MAIN SET, BY COLUMN
 
 .tally_columns
     JSR reset_tally     \  This will leave 0 in A
     STA var_pos
     STA pixelY          \  This will count the rows
+    LDX #8              \  Clear the individual row counts
+._tyc_clr_0
+    STA position_07, X
+    STA position_8, X
+    DEX
+    BPL _tyc_clr_0
 ._tyc_row
     LDA #0
     STA pixelX          \  This will count the columns
 ._tyc_col
     LDY var_pos
-    JSR get_alt_cell
+    JSR get_set_cell
     BEQ _tyc_not_in
 ._tyc_in
     LDX pixelX          \  Current column
     INC cand_count, X
+    LDY pixelY
+    CPY #8
+    BCS _tyc_in_8
+._tyc_in_07             \  Set a bit in rows 1-8 of the column
+    LDA position_07, X
+    ORA bits_HL, Y
+    STA position_07, X
+    BNE _tyc_not_in     \  Will always branch
+._tyc_in_8              \  Set a bit in row 9 of the column
+    LDA position_8, X
+    ORA bits_HL-8, Y
+    STA position_8, X
 ._tyc_not_in
     INC var_pos
     INC pixelX
@@ -1956,10 +2010,460 @@ ORG &6000
     CMP #81             \  Exit if we have reached end of grid
     BCS _tyc_done
     INC pixelY
-    BNE _tyr_row        \  Not expected to fall through
+    BNE _tyc_row        \  Not expected to fall through
 ._tyc_done
+    LDA digit
+    ORA #&80            \  Set "column" flag
+    STA digit
     RTS
     
+\  FISH FOR A SWORDFISH!
+\
+\  EXPECTS cand_count ET SEQ TO BE FILLED WITH NUMBERS OF POSSIBLE
+\  HOMES FOR THE DIGIT IN EACH ROW/COLUMN, AND BIT 7 OF digit TO BE
+\  CLEAR IF WORKING BY ROW, OR SET IF WORKING BY COLUMN.
+
+.fish_for_swordfish
+    LDA #0
+    STA pos1            \  Start with 1st R/C at 0
+._fsf_pos1_top
+    LDX pos1
+    LDA cand_count, X
+    CMP #2
+    BCC _fsf_pos1_btm   \  Skip if fewer than 2 homes
+    CMP #4
+    BCS _fsf_pos1_btm   \  Skip if more than 3 homes
+
+    \JSR _fsf_pos1_ok
+
+    LDX pos1            \  Start with 2nd R/C just after 1st
+    INX
+    STX pos2
+    
+._fsf_pos2_top
+    LDX pos2
+    LDA cand_count, X
+    CMP #2
+    BCC _fsf_pos2_btm   \  Skip if fewer than 2 homes
+    CMP #4
+    BCS _fsf_pos2_btm   \  Skip if more than 3 homes
+
+    \JSR _fsf_pos2_ok
+    
+    LDX pos2            \  Start with 3rd R/C just after 2nd
+    INX
+    STX pos3
+    
+._fsf_pos3_top
+    LDX pos3
+    LDA cand_count, X
+    CMP #2
+    BCC _fsf_pos3_btm   \  Skip if fewer than 2 homes
+    CMP #4
+    BCS _fsf_pos3_btm   \  Skip if more than 3 homes
+
+    JSR _fsf_pos3_ok
+    
+._fsf_pos3_btm
+    LDA solved          \  Terminate loop early if puzzle is finished
+    CMP #81
+    BEQ _fsf_done
+    INC pos3
+    LDA pos3
+    CMP #9              \  Last of three
+    BCC _fsf_pos3_top
+    
+._fsf_pos2_btm
+    INC pos2
+    LDA pos2
+    CMP #8              \  Second of three
+    BCC _fsf_pos2_top
+    
+._fsf_pos1_btm
+    INC pos1
+    LDA pos1
+    CMP #7              \  First of three
+    BCC _fsf_pos1_top
+._fsf_done
+    RTS
+    
+._fsf_pos1_ok
+    JSR say
+    EQUS "1.Row/Col "
+    BRK
+    LDA pos1
+    SEC
+    ADC #&30
+    JSR oswrch
+    JSR say
+    EQUS " has "
+    BRK
+    LDX pos1
+    LDA cand_count, X
+    JSR disp_digit_sp
+    JSR say
+    EQUS "homes for "
+    BRK
+    LDA digit
+    AND #&7F            \  Ignore column flag
+    JSR disp_digit
+    LDA #46             \  full stop
+    JSR oswrch
+    JMP osnewl
+
+._fsf_pos2_ok
+    JSR say
+    EQUS "2.Row/Col "
+    BRK
+    LDA pos2
+    SEC
+    ADC #&30
+    JSR oswrch
+    JSR say
+    EQUS " has "
+    BRK
+    LDX pos2
+    LDA cand_count, X
+    JSR disp_digit_sp
+    JSR say
+    EQUS "homes for "
+    BRK
+    LDA digit
+    AND #&7F            \  Ignore column flag
+    JSR disp_digit
+    LDA #46             \  full stop
+    JSR oswrch
+    JMP osnewl
+
+._fsf_pos3_ok
+\    JSR say
+\    EQUS "3.Row/Col "
+\    BRK
+\    LDA pos3
+\    SEC
+\    ADC #&30
+\    JSR oswrch
+\    JSR say
+\    EQUS " has "
+\    BRK
+\    LDX pos3
+\    LDA cand_count, X
+\    JSR disp_digit_sp
+\    JSR say
+\    EQUS "homes for "
+\    BRK
+\    LDA digit
+\    AND #&7F            \  Ignore column flag
+\    JSR disp_digit
+\    LDA #46             \  full stop
+\    JSR oswrch
+\    JSR osnewl
+    
+\    JSR say
+\    EQUS "Potential swordfish: "
+\    BRK
+\    LDA digit
+\    AND #&7F            \  Ignore column flag
+\    JSR disp_digit_sp
+\    BIT digit
+\    BMI _fsf_hit_C
+\    LDA #82             \  "R"
+\    BNE _fsf_hit_any
+\._fsf_hit_C
+\    LDA #67             \  "C"
+\._fsf_hit_any
+\    JSR oswrch
+\    LDA pos1
+\    JSR disp_digit_inc
+\    LDA pos2
+\    JSR disp_digit_inc
+\    LDA pos3
+\    JSR disp_digit_inc
+\    JSR osnewl
+
+    \  COUNT THE CANDIDATES IN CASE IT IS NOT A REAL SWORDFISH
+
+    LDX pos1            \  Make a copy of the swordfish positions
+    LDA position_07, X
+    LDX pos2
+    ORA position_07, X
+    LDX pos3
+    ORA position_07, X
+    STA cand_copy
+    STA product         \  Sacrificial copy to count bits
+    LDA position_8, X
+    LDX pos2
+    ORA position_8, X
+    LDX pos1
+    ORA position_8, X
+    STA cand_copy+1
+    STA product+1
+    
+    \  If there are more than 3 bits set in the copy, the rows and
+    \  columns do not line up, meaning it is not a real swordfish.
+    
+._fsf_count_pos
+\    LDX #0
+\    BIT digit
+\    BMI _fsf_cp_1
+\    LDA #67             \  "C"
+\    BNE _fsf_cp_2
+\._fsf_cp_1
+\    LDA #82             \  "R"
+\._fsf_cp_2
+\    JSR oswrch
+    LDA #0
+    STA product+2
+    TAX
+._fsf_cp_3
+    ASL product+1
+    ROL product
+    BCC _fsf_cp_4
+    INC product+2
+\    TXA
+\    JSR disp_digit_inc
+._fsf_cp_4
+    INX
+    CPX #9
+    BCC _fsf_cp_3
+\    LDA #40             \  "("
+\    JSR oswrch
+\    LDA product+2
+\    JSR disp_digit
+\    LDA #41             \  ")"
+\    JSR oswrch
+\    LDA #46             \  full stop
+\    JSR oswrch
+\    JSR osnewl
+    LDA product+2    
+    
+\    LDA #0
+\    ASL product+1
+\    ADC #0              \  Increase A if C=1
+\    LDX #8
+\._esf_test_0
+\    ASL product
+\    ADC #0              \  Increase A if C=1
+\    DEX
+\    BNE _esf_test_0
+
+    CMP #3
+    BEQ _esf_real_swordfish
+    RTS
+    
+    \JSR say
+    \EQUS "Not a real swordfish."
+    \BRK
+    \JMP osnewl
+    
+._esf_real_swordfish    
+    JSR eliminate_swordfish
+    JSR test_alt
+    BEQ _fsf_no_elim
+    
+    JSR say
+    EQUS "Swordfish "
+    BRK
+    LDA digit
+    AND #&7F            \  Ignore column flag
+    JSR disp_digit_sp
+    \JSR say
+    \EQUS " in "
+    \BRK
+    BIT digit
+    BMI _fsf_hit_C
+    LDA #82             \  "R"
+    BNE _fsf_hit_any
+._fsf_hit_C
+    LDA #67             \  "C"
+._fsf_hit_any
+    JSR oswrch
+    LDA pos1
+    JSR disp_digit_inc
+    LDA pos2
+    JSR disp_digit_inc
+    LDA pos3
+    JSR disp_digit_inc
+    BIT digit
+    BMI _fsf_hit_C2
+    LDA #67             \  "C"
+    BNE _fsf_hit_any2
+._fsf_hit_C2
+    LDA #82             \  "R"
+._fsf_hit_any2
+    JSR oswrch
+    LDA cand_copy
+    STA product
+    LDA cand_copy+1
+    STA product+1
+    LDX #0
+._fsf_disp_col
+    ASL product+1
+    ROL product
+    BCC _fsf_dc1
+    TXA
+    JSR disp_digit_inc
+._fsf_dc1
+    INX
+    CPX #9
+    BCC _fsf_disp_col
+    LDA #58             \  colon
+    JSR oswrch
+    JSR osnewl
+    JSR elim_alt
+    
+    \  NOW WE HAVE TO RE-TALLY THE ROWS OR COLUMNS
+    \  BECAUSE SOME DIGITS MAY HAVE BEEN ELIMINATED
+    
+._fsf_retally
+    LDY #57             \  Re-display the main set
+    JSR show_set
+    BIT digit
+    BMI _fsf_retally_cols
+._fsf_retally_rows
+    JMP tally_rows
+._fsf_retally_cols
+    JMP tally_columns    
+._fsf_no_elim
+    RTS
+    
+.eliminate_swordfish
+    JSR init_alt_zero   \  Start with alt set empty
+    STA var_pos         \  A will be 0 here
+    STA pixelX
+    STA pixelY
+    BIT digit
+    BPL elim_sf_rows
+    JMP elim_sf_cols
+.elim_sf_rows
+    LDY pixelY
+._esr_row
+    CPY pos1
+    BEQ _esr_not_this   \  Skip rows in the swordfish
+    CPY pos2
+    BEQ _esr_not_this
+    CPY pos3
+    BEQ _esr_not_this
+    LDX #0              \  Work along row, eliminating candidates from
+    STX pixelX          \  columns which are part of the swordfish.
+._esr_col
+    CPX #8
+    BCS _esr_col_8
+._esr_col_07            \  Test if column 0-7 is in swordfish
+    LDA cand_copy
+    AND bits_HL, X
+    BEQ _esr_not_in
+    BNE _esr_in
+._esr_col_8
+    LDA cand_copy+1
+    AND bits_HL-8, X
+    BEQ _esr_not_in
+._esr_in
+    JSR sf_maybe_elim
+._esr_not_in
+    INC pixelX
+    LDX pixelX
+    CPX #9
+    BCC _esr_col
+._esr_not_this
+    INC pixelY
+    LDY pixelY
+    CPY #9
+    BCC _esr_row
+    LDY #66             \  Display contents of alternate set at row 66
+    JMP show_alt
+    RTS
+
+.elim_sf_cols
+    LDX pixelX
+._esc_col
+    CPX pos1
+    BEQ _esc_not_this   \  Skip column in the swordfish
+    CPX pos2
+    BEQ _esc_not_this
+    CPX pos3
+    BEQ _esc_not_this
+    LDY #0              \  Work down column, eliminating candidates from
+    STY pixelY          \  rows which are part of the swordfish.
+._esc_row
+    CPY #8
+    BCS _esc_row_8
+._esc_row_07            \  Test if column 0-7 is in swordfish
+    LDA cand_copy
+    AND bits_HL, X
+    BEQ _esc_not_in
+    BNE _esc_in
+._esc_row_8
+    LDA cand_copy+1
+    AND bits_HL-8, Y
+    BEQ _esc_not_in
+._esc_in
+    JSR sf_maybe_elim
+._esc_not_in
+    INC pixelY
+    LDX pixelY
+    CPX #9
+    BCC _esc_row
+._esc_not_this
+    INC pixelY
+    LDY pixelY
+    CPY #9
+    BCC _esc_col
+    LDY #66             \  Display contents of alternate set at row 66
+    JMP show_alt
+    RTS
+
+\  SET A CELL IN ROW Y, COLUMN X OF THE ALTERNATE SET IF THE
+\  CORRESPONDING POSITION IN THE MAIN SET IS SET
+
+.sf_maybe_elim
+    LDA pixelY
+    ASL A
+    ASL A
+    ASL A               \  Now we have Y * 8; Carry should be clear
+    ADC pixelY          \  Now we have Y * 9
+    ADC pixelX          \  Now we have Y * 9 + X
+    TAY
+    PHA
+    JSR get_set_cell
+    BEQ _sfe_not_cand
+    PLA
+    TAY
+    JMP set_alt_cell
+._sfe_not_cand
+    PLA
+    RTS
+
+\  ELIMINATE CANDIDATES FROM POSITIONS IN THE ALTERNATE SET
+
+.elim_alt
+    LDA var_pos         \  Store var_pos on the stack
+    PHA
+    LDY #0
+    STY var_pos
+._ela_pos
+    JSR get_alt_cell
+    BEQ _ela_not_in
+    LDY var_pos         \  Eliminate from the main set also
+    JSR clr_set_cell
+    LDX var_pos
+    LDA digit
+    AND #&7F            \  Ignore column flag
+    JSR eliminate_candidate
+    LDX var_pos
+    JSR disp_contents
+._ela_not_in
+    LDA solved          \  Terminate loop early if puzzle is finished
+    CMP #81
+    BEQ _ela_done
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _ela_pos
+._ela_done
+    PLA
+    STA var_pos         \  Retrieve var_pos
+    RTS
 
 \  DISPLAY A MULTI-DIGIT DECIMAL NUMBER
 \
@@ -1994,6 +2498,7 @@ ORG &6000
     JSR disp_digit
 ._dd_no_10s
     LDA units
+    
 \  DISPLAY A SINGLE DIGIT
 
 .disp_digit
@@ -2003,6 +2508,18 @@ ORG &6000
     PLA
     RTS
 
+\  DISPLAY A DIGIT INCREASED BY 1
+\  THIS IS USEFUL FOR DISPLAYING HUMAN-FRIENDLY VERSIONS OF INTERNAL
+\  ROW/COLUMN NUMBERS WHICH NATURALLY GO FROM 0 TO 8
+    
+.disp_digit_inc
+    PHA
+    SEC
+    ADC #&30
+    JSR oswrch
+    PLA
+    RTS
+    
 \  DISPLAY A SINGLE DIGIT FOLLOWED BY A SPACE
 
 .disp_digit_sp
@@ -2179,9 +2696,34 @@ ALIGN &100
     EQUB 84:EQUB 83:EQUB 82:EQUB 81:EQUB 80
     EQUB 44:EQUB 43:EQUB 42:EQUB 41:EQUB 40
     EQUB 4:EQUB 3:EQUB 2:EQUB 1:EQUB 0
+
+.cand_sets
+    EQUW all_ones
+    EQUW all_twos
+    EQUW all_threes
+    EQUW all_fours
+    EQUW all_fives
+    EQUW all_sixes
+    EQUW all_sevens
+    EQUW all_eights
+    EQUW all_nines
+
 .slack_space
     
-ORG &7680
+ORG &7500
+
+.alt_set_map
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+
+.position_07
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00
+.position_8
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00
+
+ALIGN &80
 
 .group_map
     EQUB&FF:EQUB&80:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
@@ -2291,6 +2833,45 @@ ORG &7680
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&0E
     EQUB&07:EQUB&03:EQUB&80 \ B9
     EQUS "B9"
+
+.all_ones
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A1"
+
+.all_twos
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A2"
+.all_threes
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A3"
+.all_fours
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A4"
+.all_fives
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A5"
+.all_sixes
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A6"
+.all_sevens
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A7"
+
+.all_eights
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A8"
+.all_nines
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "A9"
 
 ORG &7800
 
