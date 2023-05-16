@@ -616,6 +616,7 @@ ORG &6000
     JSR osnewl
     PLA
     TAX
+    JSR disp_contents
     
     CLV                 \  V=0 => not naked single
     CLC                 \  C=0 => candidate successfully eliminated
@@ -638,14 +639,23 @@ ORG &6000
 ._ctc_naked
     \  ONLY ONE POSSIBLE CANDIDATE REMAINS = NAKED SINGLE!
     \  DIGIT VALUE MUST BE IN preload
-    LDA #&80
-    STA cands_17, X     \  Set "solved" bit
-    LDA preload
-    STA cands_89v, X    \  Store cell value
-    INC solved          \  Increase solved count
+    \LDA #&80
+    \STA cands_17, X     \  Set "solved" bit
+    \LDA preload
+    \STA cands_89v, X    \  Store cell value
+    \INC solved          \  Increase solved count
     \JSR _ctc_naked1
+    
     TXA
     PHA
+    LDA preload
+    JSR set_digit
+    PLA
+    PHA
+    TAX
+    
+    \   TXA             \  done other way round now
+    \   PHA
     JSR disp_pos
     JSR say
     EQUS " can only contain "
@@ -657,16 +667,21 @@ ORG &6000
     JSR osnewl
     PLA
     TAX
-    LDA digit
-    PHA
-    TXA
-    PHA
-    LDA cands_89v, X
-    JSR elim_out
-    PLA
-    TAX
-    PLA
-    STA digit
+    JSR disp_contents
+    
+\  NO!  DON'T TRY TO CHASE THIS UP YET!  WE HAVE NOT YET DONE ALL THE
+\  CONSEQUENT ELIMINATIONS.  
+
+    \LDA digit
+    \PHA
+    \TXA
+    \PHA
+    \LDA cands_89v, X
+    \JSR elim_out
+    \PLA
+    \TAX
+    \PLA
+    \STA digit
     
     LDY preload
     BIT _ctc_rts        \  This will set V=1 => cell now solved
@@ -1013,6 +1028,19 @@ ORG &6000
 \ 5114PROCdisp_cont(I%)
 
     STX fix_pos
+    \JSR say
+    \EQUS "Eliminating outwards from "
+    \BRK
+    \LDA digit
+    \JSR disp_digit_sp
+    \JSR say
+    \EQUS "in "
+    \BRK
+    \LDX fix_pos
+    \JSR disp_pos
+    \LDA #58             \  colon
+    \JSR oswrch
+    \JSR osnewl
     LDY #66
     JSR show_seen
     LDX fix_pos
@@ -1137,6 +1165,7 @@ ORG &6000
     JSR say
     EQUS "Naked single"
     BRK
+    JSR osnewl
     
     LDA #80             \  Jump to end of grid
     STA var_pos
@@ -1319,6 +1348,9 @@ ORG &6000
     STA (alt_ptr), Y
     RTS
 
+.show_alt_66
+    LDY #66             \  Usual position where we want to show this
+    
 \  SHOW THE IN/OUT STATUS OF THE ALTERNATE SET OF GRID SQUARES
 \  ON ENTRY Y = VERTICAL POSITION
 \           alt-ptr,alt_ptr+1 => SET TO DISPLAY
@@ -1341,21 +1373,15 @@ ORG &6000
     PLP                 \  Retrieve Z flag
     BEQ _sha_0
     JSR set_pixel
-\    LDA #42             \  "*"
-\    JSR oswrch
-\    JMP _sha_next
     BNE _sha_next       \  Will always branch
 ._sha_0
     JSR clr_pixel
-\    LDA #46             \  "."
-\    JSR oswrch
 ._sha_next
     INC var_pos
     INC pixelX
     LDA pixelX
     CMP #77
     BCC _sha_col
-\    JSR osnewl
     INC pixelY
     LDA var_pos
     CMP #81
@@ -1722,8 +1748,8 @@ ORG &6000
 .elim_ext
     STA digit           \  The digit we are eliminating
     JSR init_alt_digit
-    LDY #66
-    JSR show_alt
+    \LDY #66
+    JSR show_alt_66
 
 \ 4700FORI%=0TO80
 
@@ -1755,8 +1781,8 @@ ORG &6000
     BEQ _elx_not_in     \  Ignore non-candidates
     LDX var_pos
     JSR and_alt_seen    \  Strike out cells it does not see
-    LDY #66
-    JSR show_alt
+    \LDY #66
+    JSR show_alt_66
     JSR test_alt        \  See if any candidates remain ...
     BEQ _elx_done       \  ... Skip if not
 
@@ -1916,6 +1942,15 @@ ORG &6000
     RTS
 
 \  TALLY CELLS IN THE MAIN SET, BY ROW
+\  cand_count ET SEQ HOLD THE NUMBER OF CELLS IN EACH ROW THAT CAN
+\  CONTAIN THE DIGIT UNDER CONSIDERATION.
+\  position_07 ET SEQ AND position_8 ET SEQ HOLD A BITWISE REPRESENTATION
+\  OF THE CELLS IN EACH ROW THAT CAN CONTAIN THE DIGIT.
+\
+\  position_07                         position_8
+\  128  64  32  16   8   4   2   1     128 64  32  16   8   4   2   1
+\    |   |   |   |   |   |   |   |       |  `-----------------------'
+\   C1  C2  C3  C4  C5  C6  C7  C8      C9          not used
 
 .tally_rows
     JSR reset_tally     \  This will leave 0 in A
@@ -1967,6 +2002,11 @@ ORG &6000
     RTS
     
 \  TALLY CELLS IN THE MAIN SET, BY COLUMN
+\  AS ABOVE EXCEPT
+\  position_07                         position_8
+\  128  64  32  16   8   4   2   1     128 64  32  16   8   4   2   1
+\    |   |   |   |   |   |   |   |       |  `-----------------------'
+\   R1  R2  R3  R4  R5  R6  R7  R8      C9          not used
 
 .tally_columns
     JSR reset_tally     \  This will leave 0 in A
@@ -2034,8 +2074,6 @@ ORG &6000
     CMP #4
     BCS _fsf_pos1_btm   \  Skip if more than 3 homes
 
-    \JSR _fsf_pos1_ok
-
     LDX pos1            \  Start with 2nd R/C just after 1st
     INX
     STX pos2
@@ -2048,8 +2086,6 @@ ORG &6000
     CMP #4
     BCS _fsf_pos2_btm   \  Skip if more than 3 homes
 
-    \JSR _fsf_pos2_ok
-    
     LDX pos2            \  Start with 3rd R/C just after 2nd
     INX
     STX pos3
@@ -2087,99 +2123,7 @@ ORG &6000
 ._fsf_done
     RTS
     
-._fsf_pos1_ok
-    JSR say
-    EQUS "1.Row/Col "
-    BRK
-    LDA pos1
-    SEC
-    ADC #&30
-    JSR oswrch
-    JSR say
-    EQUS " has "
-    BRK
-    LDX pos1
-    LDA cand_count, X
-    JSR disp_digit_sp
-    JSR say
-    EQUS "homes for "
-    BRK
-    LDA digit
-    AND #&7F            \  Ignore column flag
-    JSR disp_digit
-    LDA #46             \  full stop
-    JSR oswrch
-    JMP osnewl
-
-._fsf_pos2_ok
-    JSR say
-    EQUS "2.Row/Col "
-    BRK
-    LDA pos2
-    SEC
-    ADC #&30
-    JSR oswrch
-    JSR say
-    EQUS " has "
-    BRK
-    LDX pos2
-    LDA cand_count, X
-    JSR disp_digit_sp
-    JSR say
-    EQUS "homes for "
-    BRK
-    LDA digit
-    AND #&7F            \  Ignore column flag
-    JSR disp_digit
-    LDA #46             \  full stop
-    JSR oswrch
-    JMP osnewl
-
 ._fsf_pos3_ok
-\    JSR say
-\    EQUS "3.Row/Col "
-\    BRK
-\    LDA pos3
-\    SEC
-\    ADC #&30
-\    JSR oswrch
-\    JSR say
-\    EQUS " has "
-\    BRK
-\    LDX pos3
-\    LDA cand_count, X
-\    JSR disp_digit_sp
-\    JSR say
-\    EQUS "homes for "
-\    BRK
-\    LDA digit
-\    AND #&7F            \  Ignore column flag
-\    JSR disp_digit
-\    LDA #46             \  full stop
-\    JSR oswrch
-\    JSR osnewl
-    
-\    JSR say
-\    EQUS "Potential swordfish: "
-\    BRK
-\    LDA digit
-\    AND #&7F            \  Ignore column flag
-\    JSR disp_digit_sp
-\    BIT digit
-\    BMI _fsf_hit_C
-\    LDA #82             \  "R"
-\    BNE _fsf_hit_any
-\._fsf_hit_C
-\    LDA #67             \  "C"
-\._fsf_hit_any
-\    JSR oswrch
-\    LDA pos1
-\    JSR disp_digit_inc
-\    LDA pos2
-\    JSR disp_digit_inc
-\    LDA pos3
-\    JSR disp_digit_inc
-\    JSR osnewl
 
     \  COUNT THE CANDIDATES IN CASE IT IS NOT A REAL SWORDFISH
 
@@ -2203,15 +2147,6 @@ ORG &6000
     \  columns do not line up, meaning it is not a real swordfish.
     
 ._fsf_count_pos
-\    LDX #0
-\    BIT digit
-\    BMI _fsf_cp_1
-\    LDA #67             \  "C"
-\    BNE _fsf_cp_2
-\._fsf_cp_1
-\    LDA #82             \  "R"
-\._fsf_cp_2
-\    JSR oswrch
     LDA #0
     STA product+2
     TAX
@@ -2220,41 +2155,14 @@ ORG &6000
     ROL product
     BCC _fsf_cp_4
     INC product+2
-\    TXA
-\    JSR disp_digit_inc
 ._fsf_cp_4
     INX
     CPX #9
     BCC _fsf_cp_3
-\    LDA #40             \  "("
-\    JSR oswrch
-\    LDA product+2
-\    JSR disp_digit
-\    LDA #41             \  ")"
-\    JSR oswrch
-\    LDA #46             \  full stop
-\    JSR oswrch
-\    JSR osnewl
-    LDA product+2    
-    
-\    LDA #0
-\    ASL product+1
-\    ADC #0              \  Increase A if C=1
-\    LDX #8
-\._esf_test_0
-\    ASL product
-\    ADC #0              \  Increase A if C=1
-\    DEX
-\    BNE _esf_test_0
-
+    LDA product+2        
     CMP #3
     BEQ _esf_real_swordfish
     RTS
-    
-    \JSR say
-    \EQUS "Not a real swordfish."
-    \BRK
-    \JMP osnewl
     
 ._esf_real_swordfish    
     JSR eliminate_swordfish
@@ -2370,8 +2278,8 @@ ORG &6000
     LDY pixelY
     CPY #9
     BCC _esr_row
-    LDY #66             \  Display contents of alternate set at row 66
-    JMP show_alt
+    \LDY #66             \  Display contents of alternate set at row 66
+    JMP show_alt_66
     RTS
 
 .elim_sf_cols
@@ -2409,8 +2317,8 @@ ORG &6000
     LDY pixelY
     CPY #9
     BCC _esc_col
-    LDY #66             \  Display contents of alternate set at row 66
-    JMP show_alt
+    \LDY #66             \  Display contents of alternate set at row 66
+    JMP show_alt_66
     RTS
 
 \  SET A CELL IN ROW Y, COLUMN X OF THE ALTERNATE SET IF THE
@@ -2434,6 +2342,309 @@ ORG &6000
     PLA
     RTS
 
+\  X-WINGS AND SKYSCRAPERS
+\
+\  AN X-WING IS REALLY JUST A SPECIAL KIND OF SKYSCRAPER
+\
+\  pos1 AND pos2 ARE THE ONLY TWO CANDIDATE CELLS FOR OUR DIGIT IN THE
+\  SAME ROW (column)
+\  pos3 AND pos4 ARE THE ONLY TWO CANDIDATE CELLS FOR OUR DIGIT IN A
+\  DIFFERENT ROW (column)
+\  NOW IF pos1 SEES pos3 THEN WE CAN ELIMINATE OUR DIGIT AS A CANDIDATE
+\  FROM ANY CELL SEE BY pos2 AND pos4; IF pos2 SEES pos4 THEN WE CAN
+\  ELIMINATE OUR DIGIT AS A CANDIDATE FROM ANY CELL SEE BY pos2 AND pos4.
+\  
+
+\  SEARCH FOR A SKYSCRAPER / X-WING IN ROWS
+
+.search_ss_xw_rows
+    LDY #0
+    STY pixelY          \  This will count the rows
+._sxr_ab_top
+    LDA cand_count, Y   \  Get number of candidate cells in row Y
+    CMP #2              \  See if there are exactly two
+    BNE _sxr_ab_btm
+    
+    \  NOW WE HAVE OUR A-B ROW IN pixelY
+    
+    LDA pixelY          \  Save this while we find a C-D row
+    PHA
+    
+    LDX #0
+    STX pixelX
+._sxr_a_0
+    JSR conv_pixel      \  Get position
+    TAY
+    JSR get_set_cell    \  See if it's in the set
+    BNE _sxr_a_1        \  Jump out if it's in
+    INC pixelX
+    LDX pixelX
+    CPX #8
+    BCC _sxr_a_0
+    RTS                 \  Not ideal
+._sxr_a_1
+    JSR conv_pixel
+    STA pos1            \  pos1 holds A position
+    
+    INC pixelX
+    LDX pixelX
+
+._sxr_b_0
+    JSR conv_pixel      \  Get position
+    TAY
+    JSR get_set_cell    \  See if it's in the set
+    BNE _sxr_b_1        \  Jump out if it's in
+    INC pixelX
+    LDX pixelX
+    CPX #8
+    BCC _sxr_b_0
+    BCS _sxr_cd_btm     \  Should never happen
+._sxr_b_1
+    JSR conv_pixel
+    STA pos2            \  pos2 holds B position
+
+    INC pixelY          \  Begin C-D search on next row
+    LDY pixelY
+._sxr_cd_top
+    LDA cand_count, Y   \  Get number of candidate cells in row Y
+    CMP #2              \  See if there are exactly two
+    BNE _sxr_cd_btm
+    
+    \  NOW WE HAVE OUR C-D ROW IN pixelY
+
+    LDX #0
+    STX pixelX
+    JSR search_row
+    STA pos3
+    INC pixelX
+    LDX pixelX
+    JSR search_row
+    STA pos4
+    
+    PLA                 \  We pushed A-B row earlier
+    RTS
+    
+._sxr_cd_btm
+    INC pixelY          \  Next row
+    LDY pixelY
+    CPY #9
+    BCC _sxr_cd_top
+    
+    PLA
+    STA pixelY          \  Restore original A-B row
+._sxr_ab_btm
+    INC pixelY          \  Next row
+    LDY pixelY
+    CPY #8
+    BCC _sxr_ab_top
+    
+    SEC                 \  C=1 => nothing found
+    RTS
+
+\  SEARCH FOR A SKYSCRAPER / X-WING IN COLUMNS
+
+.search_ss_xw_columns
+    LDX #0
+    STX pixelX          \  This will count the columns
+._sxc_ab_top
+    LDA cand_count, X   \  Get number of candidate cells in col X
+    CMP #2              \  See if there are exactly two
+    BNE _sxc_ab_btm
+    
+    \  NOW WE HAVE OUR A-B COLUMN IN pixelX
+    
+    LDA pixelX          \  Save this while we find a C-D column
+    PHA
+    
+    LDY #0
+    STY pixelY
+    JSR search_col
+    STA pos1
+    INC pixelY
+    LDY pixelY
+    JSR search_col
+    BCS _sxc_cd_btm     \  Should never happen
+    STA pos2            \  pos2 holds B position
+
+    INC pixelX          \  Begin C-D search on next row
+    LDX pixelX
+._sxc_cd_top
+    LDA cand_count, X   \  Get number of candidate cells in row Y
+    CMP #2              \  See if there are exactly two
+    BNE _sxc_cd_btm
+    
+    \  NOW WE HAVE OUR C-D COLUMN IN pixelX
+
+    LDX #0
+    STX pixelY
+    JSR search_col
+    STA pos3
+    INC pixelY
+    LDX pixelY
+    JSR search_col
+    STA pos4
+    
+    PLA                 \  We pushed A-B row earlier
+    RTS
+    
+._sxc_cd_btm
+    INC pixelX          \  Next row
+    LDX pixelX
+    CPX #9
+    BCC _sxc_cd_top
+    
+    PLA
+    STA pixelX          \  Restore original A-B column
+._sxc_ab_btm
+    INC pixelX          \  Next column
+    LDX pixelX
+    CPX #8
+    BCC _sxc_ab_top
+    
+    SEC                 \  C=1 => nothing found
+    RTS
+
+\  CONVERT PIXEL CO-ORDINATES pixelX, pixelY TO POSITION
+
+.conv_pixel
+    LDA pixelY
+    ASL A
+    ASL A
+    ASL A               \  Now we have Y * 8; Carry should be clear
+    ADC pixelY          \  Now we have Y * 9
+    ADC pixelX          \  Now we have Y * 9 + X
+    RTS
+
+\  SEARCH A ROW HORIZONTALLY FOR A CELL IN THE MAIN SET
+
+.search_row
+    JSR conv_pixel      \  Get position
+    TAY
+    JSR get_set_cell    \  See if it's in the set
+    BNE _sr_1           \  Jump out if it's in
+.search_row_1
+    INC pixelX
+    LDX pixelX
+    CPX #9
+    BCC search_row
+    RTS                 \  With C=1
+._sr_1
+    JSR conv_pixel      \  Return position in A
+    CLC                 \  With C=0 => success
+    RTS
+
+\  SEARCH A COLUMN FOR A CELL IN THE MAIN SET
+
+.search_col
+    JSR conv_pixel      \  Get position
+    TAY
+    JSR get_set_cell    \  See if it's in the set
+    BNE _sr_1           \  Jump out if it's in
+.search_col_1
+    INC pixelY
+    LDY pixelY
+    CPY #9
+    BCC search_col
+    RTS                 \  With C=1
+    
+\  TEST A PUTATIVE SKYSCRAPER/X-WING FOR ELIMINATIONS
+\  EXPECTS pos1 AND pos2 TO BE IN SAME ROW/COLUMN
+\  pos3 AND pos4 TO BE IN OTHER ROW/COLUMN
+
+.test_ss_xw
+    JSR reset_alt       \  Start with alternate set empty
+    JSR init_alt_zero
+    LDX #alt_set_1 MOD 256
+    LDY #alt_set_1 DIV 256
+    JSR seed_alt_ptr    \  Set up a safe alternate set to work with
+    LDX pos1
+    LDY pos3
+    JSR get_see
+    BEQ _tsx_a_miss_c
+    LDX pos2
+    LDY pos4
+    JSR elim_seen_both
+._tsx_a_miss_c
+    LDX pos2
+    LDY pos4
+    JSR get_see
+    BEQ _tsx_b_miss_d
+    LDX pos1
+    LDY pos3
+    JSR elim_seen_both
+._tsx_b_miss_d
+    LDX pos2
+    LDY pos3
+    JSR get_see
+    BEQ _tsx_b_miss_c
+    LDX pos1
+    LDY pos4
+    JSR elim_seen_both
+._tsx_b_miss_c
+    LDX pos1
+    LDY pos4
+    JSR get_see
+    BEQ _tsx_a_miss_d
+    LDX pos2
+    LDY pos3
+    JSR elim_seen_both
+._tsx_a_miss_d
+    JSR reset_alt       \  Retrieve the eliminations
+    JSR test_alt
+    BEQ _tsx_no_elim
+    JSR say
+    EQUS "Skyscraper or X-wing on ";
+    BRK
+    LDA digit
+    AND #&0F
+    JSR disp_digit_sp
+    JSR say
+    EQUS "in "
+    BRK
+    LDX pos1
+    JSR disp_pos
+    LDA #44             \  comma
+    JSR oswrch
+    LDX pos2
+    JSR disp_pos
+    LDA #47             \  slash
+    JSR oswrch
+    LDX pos3
+    JSR disp_pos
+    LDA #44             \  comma
+    JSR oswrch
+    LDX pos4
+    JSR disp_pos
+    LDA #58             \  colon
+    JSR oswrch
+    JMP osnewl
+._tsx_no_elim
+    RTS
+    
+\  FIND CELLS IN MAIN SET WHICH ARE SEEN FROM TWO POSITIONS GIVEN IN X AND Y
+\  ON RETURN THE COMMON CELLS WILL BE IN THE ALTERNATE SET
+    
+.elim_seen_both
+    TXA                 \  Save X for later
+    PHA
+    TYA                 \  Save Y for later
+    PHA
+    JSR init_alt_main   \  Initialise alt set with clone of main set
+    \JSR show_alt_66
+    PLA                 \  Retrieve Y saved earlier
+    TAX
+    JSR int_alt_seen    \  Remove anything it does not see
+    JSR show_alt_66
+    PLA                 \  Retrieve X saved earlier
+    TAX
+    JSR int_alt_seen    \  Remove anything it does not see
+    JSR show_alt_66
+    JSR test_alt
+    BEQ _esb_none       \  Skip if nothing to eliminate
+    JMP union_alt       \  Save cells to be eliminated
+._esb_none
+    RTS
+    
 \  ELIMINATE CANDIDATES FROM POSITIONS IN THE ALTERNATE SET
 
 .elim_alt
@@ -2465,6 +2676,77 @@ ORG &6000
     STA var_pos         \  Retrieve var_pos
     RTS
 
+.reset_alt
+    LDX #alt_set_map MOD256
+    LDY #alt_set_map DIV256
+.seed_alt_ptr
+    STX alt_ptr
+    STY alt_ptr+1
+    RTS
+
+\  TAKE THE UNION OF THE "REAL" ALTERNATE SET WITH THE CURRENT ALTERNATE
+\  SET
+
+.union_alt
+    LDY #10
+._una_0
+    LDA alt_set_map, Y
+    ORA (alt_ptr), Y
+    STA alt_set_map, Y
+    DEY
+    BPL _una_0
+    LDA alt_set_map+10  \  Only use bit 7 of byte 10
+    AND #&80
+    STA alt_set_map+10
+    RTS
+    
+\  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH WHATEVER IS SEEN FROM
+\  A POSITION GIVEN IN X
+
+.int_alt_seen
+    LDA fix_pos
+    PHA
+    LDA var_pos
+    PHA
+    STX fix_pos         \  The position we care what sees    
+    LDA #0
+    STA var_pos
+    TAX
+._ias_0
+    LDY fix_pos
+    JSR get_see
+    BNE _ias_1          \  Don't clear cell if it is seen
+._ias_clr
+    LDY var_pos
+    JSR clr_alt_cell    \  Clear cell if it was not seen
+._ias_1
+    INC var_pos
+    LDX var_pos
+    CPX #81             \  See if we have reached end
+    BCC _ias_0
+._ias_done
+    LDX fix_pos         \  We can restore this
+    PLA
+    STA var_pos
+    PLA
+    STA fix_pos
+    RTS
+
+\  INITIALISE THE ALT SET WITH A COPY OF THE MAIN SET
+
+.init_alt_main
+    LDY #0
+._cam_0
+    LDA (set_ptr), Y
+    STA (alt_ptr), Y
+    INY
+    CPY #10
+    BCC _cam_0
+    DEY
+    AND #&80
+    STA (alt_ptr), Y
+    RTS
+    
 \  DISPLAY A MULTI-DIGIT DECIMAL NUMBER
 \
 \  Fast division only works for odd divisors!  
@@ -2723,6 +3005,13 @@ ORG &7500
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00
 
+.alt_set_1
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+.alt_set_2
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+
 ALIGN &80
 
 .group_map
@@ -2837,41 +3126,39 @@ ALIGN &80
 .all_ones
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A1"
-
+    EQUS "1s"
 .all_twos
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A2"
+    EQUS "2s"
 .all_threes
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A3"
+    EQUS "3s"
 .all_fours
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A4"
+    EQUS "4s"
 .all_fives
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A5"
+    EQUS "5s"
 .all_sixes
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A6"
+    EQUS "6s"
 .all_sevens
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A7"
-
+    EQUS "7s"
 .all_eights
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A8"
+    EQUS "8s"
 .all_nines
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
-    EQUS "A9"
+    EQUS "9s"
 
 ORG &7800
 
