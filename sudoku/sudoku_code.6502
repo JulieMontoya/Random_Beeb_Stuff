@@ -46,6 +46,7 @@ oswrch          = &FFEE
 \  ERROR CODES
 
 E_NOT_ALLOWED   = 51
+E_NOT_SOLVED    = 52
 
 \  SEEMS TO BE WORKING NOW
 \  WILL COMMENT OUT DEBUGGING CODE FOR NOW RATHER THAN REMOVE IT ALTOGETHER
@@ -138,6 +139,8 @@ ORG &6000
     JMP tally_rows
 .ext_tally_columns
     JMP tally_columns
+.ext_test_integrity
+    JMP test_integrity
 
 \  BLUERIZLAGIRL'S SUPER FAST DIVISION SUBROUTINE
 \
@@ -605,7 +608,7 @@ ORG &6000
     TXA
     PHA
     TAX
-    JSR disp_pos
+    JSR disp_pos_ext
     JSR say
     EQUS " cannot be "
     BRK
@@ -670,18 +673,20 @@ ORG &6000
     JSR disp_contents
     
 \  NO!  DON'T TRY TO CHASE THIS UP YET!  WE HAVE NOT YET DONE ALL THE
-\  CONSEQUENT ELIMINATIONS.  
+\  CONSEQUENT ELIMINATIONS.
+\  EXCEPT, DO CHASE IT UP, BECAUSE THESE ARE LITERALLY THE CONSEQUENT
+\  ELIMINATIONS, YOU GREAT TART!
 
-    \LDA digit
-    \PHA
-    \TXA
-    \PHA
-    \LDA cands_89v, X
-    \JSR elim_out
-    \PLA
-    \TAX
-    \PLA
-    \STA digit
+    LDA digit
+    PHA
+    TXA
+    PHA
+    LDA cands_89v, X
+    JSR elim_out
+    PLA
+    TAX
+    PLA
+    STA digit
     
     LDY preload
     BIT _ctc_rts        \  This will set V=1 => cell now solved
@@ -875,10 +880,10 @@ ORG &6000
     JSR disp_digit
 ._dpe_not_allowed
     INY
-    CPY #9
+    CPY #10
     BCC _dpe_digit
-    LDA #46
-    JSR oswrch
+    \LDA #46
+    \JSR oswrch
 
     PLA                 \  Restore copy of candidates
     STA cand_copy+1
@@ -1293,6 +1298,8 @@ ORG &6000
 \  ON ENTRY Y = VERTICAL POSITION
 \           set-ptr,set_ptr+1 => SET TO DISPLAY
 
+.show_set_57
+    LDY #57             \  Usual starting row for main set
 .show_set
     STY pixelY
     LDA #0
@@ -2684,6 +2691,15 @@ ORG &6000
     STY alt_ptr+1
     RTS
 
+.reset_set
+    LDX #group_map MOD256
+    LDY #group_map DIV256
+.seed_set_ptr
+    STX set_ptr
+    STY set_ptr+1
+    RTS
+
+    
 \  TAKE THE UNION OF THE "REAL" ALTERNATE SET WITH THE CURRENT ALTERNATE
 \  SET
 
@@ -2745,6 +2761,89 @@ ORG &6000
     DEY
     AND #&80
     STA (alt_ptr), Y
+    RTS
+    
+\  TEST THE SOLUTION FOR INTEGRITY
+\
+
+.test_integrity
+    JSR reset_set       \  Select row 1 as the main set
+    LDX #0
+    STX tempX
+    STX tempY
+._fti_set
+    JSR show_set_57
+    LDA #&81            \  Red text
+    JSR oswrch
+    JSR disp_group
+    JSR reset_tally     \  Reset count of digits
+    LDY #0
+    STY var_pos
+._fti_pos
+    JSR get_set_cell
+    BEQ _fti_not_in
+    LDX var_pos
+    LDA cands_17, X     \  Bit 7 => solved
+    BPL _fti_not_solved
+    INC cand_count      \  Count of "zeros" is count of solved digits
+    LDA cands_89v, X    \  Digit in solved cell
+    TAX
+    INC cand_count, X   \  Increase count of solved digit
+._fti_not_in
+    INC var_pos
+    LDY var_pos
+    CPY #81
+    BCC _fti_pos
+    
+    LDA cand_count
+    CMP #9
+    BNE _fti_not_solved
+    LDX #1
+._fti_test_tally
+    LDA cand_count, X
+    CMP #1
+    BNE _fti_not_solved
+    INX
+    CPX #10
+    BCC _fti_test_tally
+
+    LDA #8              \  Cursor left
+    JSR oswrch
+    JSR oswrch
+    JSR oswrch
+    LDA #&82            \  Green text
+    JSR oswrch
+    LDA #9              \  Cursor right
+    JSR oswrch
+    JSR oswrch
+    
+    INC tempX
+    LDA tempX
+    CMP #9
+    BCC _fti_no_newl
+    JSR osnewl
+    LDA #0
+    STA tempX
+._fti_no_newl
+    INC tempY
+    LDA tempY
+    CMP #27
+    BCS _fti_done
+    LDA set_ptr
+    ADC #13             \  We know C=0 here
+    STA set_ptr
+    BCC _fti_next_1
+    INC set_ptr+1
+._fti_next_1
+    JMP _fti_set
+    
+._fti_not_solved
+    BRK
+    EQUB E_NOT_SOLVED
+    EQUS "Not solved"
+    BRK
+    
+._fti_done
     RTS
     
 \  DISPLAY A MULTI-DIGIT DECIMAL NUMBER
