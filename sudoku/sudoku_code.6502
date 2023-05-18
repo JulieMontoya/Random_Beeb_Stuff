@@ -141,7 +141,9 @@ ORG &6000
     JMP tally_columns
 .ext_test_integrity
     JMP test_integrity
-
+.ext_solve_group
+    JMP solve_group
+    
 \  BLUERIZLAGIRL'S SUPER FAST DIVISION SUBROUTINE
 \
 \  AS LONG AS WE ARE DIVIDING SOMETHING <= 255 BY AN ODD NUMBER, WE CAN
@@ -1551,13 +1553,19 @@ ORG &6000
     
     LDX var_pos
     JSR test_solved
-    BEQ _els_not_solved
-.els_solved
-    \LDA digit
-    LDX var_pos
-    LDA cands_89v, X
-    JSR elim_out        \  Eliminate candidates it sees
-    JMP _els_not_in
+    BNE _els_not_in
+    
+\  We don't need to do outward eliminations from solved cells, as they
+\  will already have been taken care of when the cell was first solved.
+\  Omitting this step just makes everything faster.
+\    
+\    BEQ _els_not_solved
+\.els_solved
+\    \LDA digit
+\    LDX var_pos
+\    LDA cands_89v, X
+\    JSR elim_out        \  Eliminate candidates it sees
+\    JMP _els_not_in
 ._els_not_solved
     JSR elim_in         \  Eliminate anything seen as candidate
     LDX var_pos
@@ -2761,6 +2769,74 @@ ORG &6000
     DEY
     AND #&80
     STA (alt_ptr), Y
+    RTS
+    
+\  ORIGINAL BASIC CODE
+\ 3040FORR%=0TO8:PROCpoke(set_ptr,M%):PROCshow_set(57)
+\ 3050PROCelim_set
+\ 3060PROCtally_set
+\ 3070FORD%=1TO9
+\ 3080IFcand_count?D%=1PROCfill_set(D%)
+\ 3090IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3120
+\ 3110PROCelim_ext(D%)
+\ 3120IF?solved=81D%=9:R%=9:C%=9
+\ 3130NEXT
+\ 3140M%=M%+13:NEXT
+\ 3150IF?solved=81GOTO3390
+
+\ 3040 ... :PROCshow_set(57)
+\ 3050PROCelim_set
+\ 3060PROCtally_set
+
+.solve_group
+    JSR show_set_57
+    JSR elim_set
+    JSR tally_set
+
+\ 3070FORD%=1TO9
+
+    LDA #1
+    STA digit
+    TAX                 \  Loop begins with X = digit
+    
+\ 3080IFcand_count?D%=1PROCfill_set(D%)
+
+._sg_digit
+    LDA cand_count, X
+    CMP #1              \  One possible home => hidden single
+    BNE _sg_not_hs
+    PHA                 \  Save candidate count
+    TXA
+    JSR fill_set
+    PLA                 \  Restore candidate count
+    
+\ 3090IFcand_count?D%<>2ANDcand_count?D%<>3GOTO3120
+
+._sg_not_hs
+    CMP #2
+    BCC _sg_not_23      \  Skip if fewer than 2 homes
+    CPX #4
+    BCS _sg_not_23      \  Skip if 4 or more homes
+
+\ 3110PROCelim_ext(D%)
+
+    LDA digit
+    JSR elim_ext
+
+\ 3120IF?solved=81D%=9:R%=9:C%=9
+
+._sg_not_23
+    LDA solved
+    CMP #81
+    BEQ _sg_done        \  Finish early if puzzle completed
+    
+\ 3130NEXT
+    INC digit
+    LDX digit
+    CPX #10
+    BCC _sg_digit
+    CLC
+._sg_done
     RTS
     
 \  TEST THE SOLUTION FOR INTEGRITY

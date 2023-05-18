@@ -46,3 +46,4 @@ PRINT "init_set_c=",~ext_init_set_candidate
 PRINT "tally_rows=",~ext_tally_rows
 PRINT "tally_cols=",~ext_tally_columns
 PRINT "test_int=",~ext_test_integrity
+PRINT "solve_grp=",~ext_solve_group
