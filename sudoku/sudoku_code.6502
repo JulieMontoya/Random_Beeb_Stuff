@@ -5,6 +5,9 @@ text_ptr        = &74   \  Text pointer for printing
 set_ptr         = &76   \  Main set pointer
 alt_ptr         = &78   \  Alternate set pointer for 2-way set operations
 
+grid_row        = &7A
+cur_group       = &7B
+
 pos1            = &7C
 pos2            = &7D
 pos3            = &7E
@@ -143,6 +146,10 @@ ORG &6000
     JMP test_integrity
 .ext_solve_group
     JMP solve_group
+.ext_solve_all
+    JMP solve_all
+.ext_search_bi_value
+    JMP search_bi_value
     
 \  BLUERIZLAGIRL'S SUPER FAST DIVISION SUBROUTINE
 \
@@ -610,7 +617,8 @@ ORG &6000
     TXA
     PHA
     TAX
-    JSR disp_pos_ext
+    \JSR disp_pos_ext
+    JSR disp_pos
     JSR say
     EQUS " cannot be "
     BRK
@@ -698,33 +706,37 @@ ORG &6000
     CLC                 \  C=0 => successful elimination, A is count
 ._ctc_rts
     RTS
-        
+
+\  COUNT THE NUMBER OF CANDIDATES ALLOWED IN A CELL
+\  X => CELL UNDER CONSIDERATION
+\  ON RETURN
+\  A => NUMBER OF CANDIDATES ALLOWED
+\  preload => TWO HIGHEST ALLOWED DIGITS IN HIGH AND LOW NYBBLES
+\             (I.E. CORRECT FOR NAKED SINGLE OR BI-VALUE CELL)
+
 .count_cands
     JSR copy_cands
     LDA #0
     STA multiplier      \  Use this to count allowed digits
-    STA preload         \  This is initially 0
+    STA preload         \  This is initially 00
     LDY #1              \  Digit we are testing for
     JSR asl_cand_copy   \  Skip "solved" bit
 ._ncc_digit
     JSR asl_cand_copy
     BCC _ncc_not_allowed
     INC multiplier      \  Increase count of digits allowed
-    STY preload         \  Update highest allowed digit
-    \TYA
-    \JSR disp_digit
+\    STY preload         \  Update highest allowed digit
+    ASL preload         \  Shift low nybble to high position
+    ASL preload
+    ASL preload
+    ASL preload
+    TYA
+    ORA preload         \  This digit goes in low nybble
+    STA preload
 ._ncc_not_allowed
     INY
     CPY #10
     BCC _ncc_digit
-    \LDA #46
-    \JSR oswrch
-    \LDA multiplier      \  Return count of candidates allowed
-    \JSR disp_digit_sp
-    \JSR say
-    \EQUS "left."
-    \BRK
-    \JSR osnewl
     LDA multiplier      \  Return count of candidates allowed    
     RTS
     
@@ -1304,6 +1316,12 @@ ORG &6000
     LDY #57             \  Usual starting row for main set
 .show_set
     STY pixelY
+    LDY #11
+    LDA (set_ptr), Y
+    STA &7C00 + 18 * 40 + 35
+    INY
+    LDA (set_ptr), Y
+    STA &7C00 + 18 * 40 + 36
     LDA #0
     STA var_pos
 ._shs_row
@@ -2239,8 +2257,8 @@ ORG &6000
     \  BECAUSE SOME DIGITS MAY HAVE BEEN ELIMINATED
     
 ._fsf_retally
-    LDY #57             \  Re-display the main set
-    JSR show_set
+    \LDY #57             
+    JSR show_set_57     \  Re-display the main set
     BIT digit
     BMI _fsf_retally_cols
 ._fsf_retally_rows
@@ -2770,7 +2788,31 @@ ORG &6000
     AND #&80
     STA (alt_ptr), Y
     RTS
+
+\  MAKE A FULL PASS THROUGH THE GRID
+\  
+\  GO THROUGH EACH ROW, COLUMN AND 3*3 BOX IN TURN, ATTEMPTING TO SOLVE
+\  FOR NAKED AND HIDDEN SINGLES AND ELIMINATING DIGITS WHICH WILL ALWAYS
+\  BE SEEN BY A DIGIT WHEREVER IT GOES IN A GROUP OF 9
+
+.solve_all
+    JSR reset_set       \  Select row 1 as the main set
+    LDA #0
+    STA cur_group
+._sa_set
+    JSR solve_group
+    LDA solved
+    CMP #81
+    BCS _sa_done        \  Terminate early if all solved
+    JSR next_set
+    INC cur_group
+    LDA cur_group
+    CMP #27
+    BCC _sa_set
+._sa_done
+    RTS
     
+
 \  ORIGINAL BASIC CODE
 \ 3040FORR%=0TO8:PROCpoke(set_ptr,M%):PROCshow_set(57)
 \ 3050PROCelim_set
@@ -2838,6 +2880,37 @@ ORG &6000
     CLC
 ._sg_done
     RTS
+
+\  TALLY UP ALL CANDIDATE CELLS FOR EACH DIGIT AND SAVE TO all_ones,
+\  all_twos AND SO FORTH
+
+.tally_cands
+    LDA #1
+    STA digit
+._tya_digit
+    JSR init_set_candidate
+    INC digit
+    LDA digit
+    CMP #10
+    BCC _tya_digit
+    RTS
+    
+\  TAKE THE INTERSECTION OF THE ALTERNATE SET WITH THE (UNALTERED) MAIN SET
+
+.int_alt_set
+    LDY #0
+._ias_2
+    LDA (alt_ptr), Y
+    AND (set_ptr), Y
+    STA (alt_ptr), Y    \  Save in alternate set
+    INY
+    CPY #11             \  We will wind up having done 88 bits
+    BCC _ias_2
+    DEY                 \  Back to position 10
+    AND #&80            \  Only keep bit 7
+    STA (alt_ptr), Y
+    RTS
+    
     
 \  TEST THE SOLUTION FOR INTEGRITY
 \
@@ -2845,8 +2918,8 @@ ORG &6000
 .test_integrity
     JSR reset_set       \  Select row 1 as the main set
     LDX #0
-    STX tempX
-    STX tempY
+    STX grid_row
+    STX cur_group
 ._fti_set
     JSR show_set_57
     LDA #&81            \  Red text
@@ -2870,7 +2943,6 @@ ORG &6000
     LDY var_pos
     CPY #81
     BCC _fti_pos
-    
     LDA cand_count
     CMP #9
     BNE _fti_not_solved
@@ -2893,16 +2965,16 @@ ORG &6000
     JSR oswrch
     JSR oswrch
     
-    INC tempX
-    LDA tempX
+    INC grid_row
+    LDA grid_row
     CMP #9
     BCC _fti_no_newl
     JSR osnewl
     LDA #0
-    STA tempX
+    STA grid_row
 ._fti_no_newl
-    INC tempY
-    LDA tempY
+    INC cur_group
+    LDA cur_group
     CMP #27
     BCS _fti_done
     LDA set_ptr
@@ -2921,6 +2993,43 @@ ORG &6000
     
 ._fti_done
     RTS
+    
+.next_set
+    LDA set_ptr
+    ADC #13             \  We know C=0 here
+    STA set_ptr
+    BCC _next_set1
+    INC set_ptr+1
+._next_set1
+    RTS
+    
+.search_bi_value
+    LDX #bi_value MOD 256
+    LDY #bi_value DIV 256
+    JSR seed_set_ptr    \  Point to set of bi-value cells
+    LDX #0
+    STX var_pos
+._sbv_pos
+    JSR count_cands
+    CMP #2
+    BNE _sbv_not_bival
+    LDA preload         \  This contains the two allowed candidates
+    STA bi_val_grid, X
+    LDY var_pos
+    JSR set_set_cell    \  This position is in the set
+    BNE _sbv_next       \  Will always branch
+._sbv_not_bival
+    LDA #0
+    STA bi_val_grid, X  \  &00 => not a bi-value cell
+    LDY var_pos
+    JSR clr_set_cell    \  This position is not in the set
+._sbv_next
+    INC var_pos
+    LDX var_pos
+    CPX #81
+    BCC _sbv_pos
+    RTS
+
     
 \  DISPLAY A MULTI-DIGIT DECIMAL NUMBER
 \
@@ -3334,8 +3443,25 @@ ALIGN &80
     EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
     EQUB&00:EQUB&00:EQUB&00
     EQUS "9s"
+.bi_value
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00
+    EQUS "BV"
 
-ORG &7800
+ORG &7780
+
+.bi_val_grid
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00
+
+ALIGN &100
 
 .vision_map
     EQUB&7F:EQUB&F0:EQUB&38:EQUB&10:EQUB&08:EQUB&04:EQUB&02:EQUB&01
@@ -3442,10 +3568,16 @@ ORG &7800
     EQUB&0F:EQUB&FD:EQUB&00:EQUB&80:EQUB&40:EQUB&20:EQUB&10:EQUB&08
     EQUB&04:EQUB&0E:EQUB&07:EQUB&FF:EQUB&00
 
-.code_end
-
 cands_17        = vision_map + 821
 cands_89v       = cands_17 + 81
-cand_count      = cands_17 + 162
+
+ORG cands_17 + 162
+
+.cand_count
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    EQUB&00:EQUB&00:EQUB&00:EQUB&00
+    
+.code_end
+
 
 SAVE "M.SUDOKU0", code_begin, code_end, safe_return
