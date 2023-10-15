@@ -1,5 +1,16 @@
 # SIDEWAYS ROM AND RAM STUFF
 
+## ROM FILING SYSTEM
+
+The Acorn ROM Filing System allows a stream of bytes from ROM to be treated effectively as a
+tape, from which files can be accessed sequentially and which can be wound under precise control
+of the MOS to any desired counter position.  The data is split into blocks with CRCs and headers,
+with the possibility of abbreviating the header on all but the first and last blocks.
+
+The `make_rfs` script is a utility for generating this byte stream from one or more files on
+the host, intended for use in the process of developing software to run on an emulated BBC
+Micro or Acorn Electron.
+
 ## make_rfs
 
 A Perl script to create the data stream for a Rom Filing System ROM, including headers and CRCs,
@@ -54,8 +65,10 @@ host_filename2 [ rfs_filename2 [ load_addr [exec_addr ] ] ] [T]
 ```
 
 + Lines beginning with a comment mark are ignored
++ Fields are separated by any whitespace  (spaces or tabs)
 + If the target-side filename is *, a zero-byte title file will be created on the target side
 + If no target-side filename is specified, the host-side filename will be used
++ Addresses are in hex, 1-4 digits, with no prefix
 + If no execution address is specified, the load address will be used
 + If no load address is specified, &0000 will be used
 + A final "T" indicates a text file; this will have all `\n`characters translated to `\r` to match the BBC's expectations
@@ -66,14 +79,84 @@ executed from particular addresses, a couple of MODE 7 screen saves and a text f
 
 ```
 #  Create a title file with no content
-*               **TEST1**
-hello1.bas      HELLO       1900  8023
+*                **HELLO1**
+# host_filename  beeb_name   load  exec  [T]
+hello1.bas       HELLO       1900  8023
 #  Execution address is different from load address
-hello1.o        MCODE       2E00  2E16
-pic1.m7         PIC1        7C00  7C00
-pic2.m7         PIC2        7C00  7C00
+hello1.o         MCODE       2E00  2E16
+pic1.m7          PIC1        7C00
+pic2.m7          PIC2        7C00
 #  T at end means translate line endings
-instructions    !INSTR                  T
+instructions     !INSTR                   T
 ```
 
+### The Output File
+
+The output file is suitable for inclusion directly into a sideways ROM image, which must
+already respond appropriately to service calls &0D  (by initialising a pointer at &F6-F7
+with the beginning of the RFS data stream)  and &0E  (by returning the byte pointed to by
+&F6-&F7 and advancing the pointer).  In BeebASM, use an `INCBIN` statement for this.
+
+```
+ORG &8000
+
+reload_addr = &3C00     \  Address for ROM image to reload if *RUN
+
+.rom_img_begin
+
+offset      = rom_img_begin - reload_addr
+
+.lang_entry
+    BRK: BRK: BRK       \  00, 01, 02 => Language entry (null here)
+.svc_entry
+    JMP service         \  03, 04, 05 => Service entry
+.rom_type
+    EQUB &82            \  %1000 0010 => Has service entry, 6502
+.copy_offset
+    EQUB pre_copy - rom_img_begin
+.version_no
+    EQUB &01
+.title
+    EQUS "BCP DESIGN"
+    BRK
+.version_text
+    EQUS "0.10"
+.pre_copy
+    BRK
+.copy
+    EQUS "(C) Nobody -- Public Domain"
+    BRK
+    
+\  .....  stuff omitted
+
+\  Service routine code as shown here is not complete, but shows the most
+\  important instructions .....
+
+.do_svc13
+    LDA #rfs_data MOD 256
+    STA &F6
+    LDA #rfs_data DIV 256
+    STA &F7
+
+\  .....  stuff omitted
+
+.do_svc14
+    LDX #&F6
+    LDA (&00, X)
+    INC &F6
+    BNE _svc14_1
+    INC &F7
+._svc14_1
+
+\  .....  stuff omitted
+
+.rfs_data       \  This is where service &0D sets &F6, &F7 to
+
+INCBIN "hello1.rfs"
+
+.rom_img_end
+
+SAVE "ROM_IMG", rom_img_begin, rom_img_end, self_copy - offset, reload_addr;
+
+```
 
