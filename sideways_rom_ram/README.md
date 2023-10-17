@@ -160,3 +160,15 @@ SAVE "ROM_IMG", rom_img_begin, rom_img_end, self_copy - offset, reload_addr;
 
 ```
 
+## ADDING FILES TO AN EXISTING ROM IMAGE
+
+As the files are stored strictly sequentially, you can easily add more files to an existing ROM
+Filing System stream.  Just find the "next file" address in the header of the last block; this
+will point to the "+" sign which is the end-of-stream marker.  Now specify this address as the
+`-b` parameter when building your extension stream, and `*LOAD` it on the target beginning at
+this address minus the appropriate offset.  The closing "+" will be overwritten with the "*"
+marking the beginning of the first added file, and the "+" at the end of the new stream will
+mark the end of the whole stream.
+
+_(This is already suggests an obvious improvement to the script's behaviour, which will find_
+_its way into the code in due course -- J.M.)_
