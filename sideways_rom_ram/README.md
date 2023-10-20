@@ -1,5 +1,42 @@
 # SIDEWAYS ROM AND RAM STUFF
 
+There are basically two ways in which you can use sideways RAM on the BBC Micro, where fitted
+(i.e. a Model B with a sideways RAM upgrade, B+ or Master series machine).
+
+# AS NORMAL MEMORY
+
+Once a 16K bank of sideways RAM is paged in, it occupies addresses &8000 - &BFFF  (where
+BASIC normally would be located)  and can be read and written just like "normal" memory.
+The only important things to remember are that you must page BASIC back in before you can
+return to it; and if you need to throw an error with BRK, this must be done from within
+main RAM because the BRK handler in the MOS will page BASIC back in, and the error message
+will no longer be visible.
+
+This method requires you to know the sideways RAM slot number, and also to have some code
+running in main RAM, which must page in the desired slot before calling the routine in
+sideways memory, then page BASIC back before returning.
+
+This is the simplest way of using sideways RAM, but it all feels a bit manual; a bit
+breadboard and Dymo tape.  But it's great if you want to store _data_ in sideways RAM.
+
+# AS A "PROPER" SIDEWAYS ROM
+
+Creating a "proper" ROM image which conforms to the format expected by Acorn and provides
+service calls which can be accessed via the MOS requires more work at build time, but allows
+code within the image to be accessed using the MOS API more or less transparently.  It is
+necessary for the ROM image to have a special header which can be recognised by the MOS, and
+to include code which responds to service calls issued _inter alia_ whenever the MOS passes
+on an unrecognised `OSBYTE`, `OSWORD` or star command to see whether any other sideways ROM
+knows how to deal with it.  You do not need to worry about the slot number at all:  the MOS
+will take care of all that for you.  It is even possible to serve files from ROM.
+
+The biggest worry when using this method is likely to be choosing `OSBYTE` and `OSWORD`
+calls and `*COMMANDS` which are not going to clash with other ROMs.  
+
+This method has more of a "finished product" feel about it, insofar as it is easy to imagine
+a real ROM chip in a retail box with cover artwork, a printed manual and one or more
+accompanying discs.
+
 ## ROM FILING SYSTEM
 
 The Acorn ROM Filing System allows a stream of bytes from ROM to be treated effectively as a
