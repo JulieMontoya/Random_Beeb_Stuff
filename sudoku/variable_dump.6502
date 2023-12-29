@@ -49,3 +49,4 @@ PRINT "test_int=",~ext_test_integrity
 PRINT "solve_grp=",~ext_solve_group
 PRINT "solve_all=",~ext_solve_all
 PRINT "search_bv=",~ext_search_bi_value
+PRINT "init_altON=",~ext_init_alt_one

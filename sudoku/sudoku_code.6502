@@ -150,6 +150,8 @@ ORG &6000
     JMP solve_all
 .ext_search_bi_value
     JMP search_bi_value
+.ext_init_alt_one
+    JMP init_alt_one
     
 \  BLUERIZLAGIRL'S SUPER FAST DIVISION SUBROUTINE
 \
