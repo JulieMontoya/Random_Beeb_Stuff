@@ -160,6 +160,8 @@ This saves another four bytes, bringing the total down to 48 bytes.
 
 # FULL BEEBASM SOURCE
 
+This is also included as a BBC BASIC program on the supplied disc image.
+
 ```
 .draw
     LDY #18         \  Number of rows - 1
