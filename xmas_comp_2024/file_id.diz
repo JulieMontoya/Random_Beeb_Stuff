@@ -1,0 +1,95 @@
+juliem_bbc_6502_vc3-2024.zip
+----------------------------
+
+List of files:
+    file_id.diz                     - this file
+    juliem_bbc_6502_vc3-2024.ssd    - BBC micro disc image
+    listing.png                     - image of (partial) source listing
+    output.png                      - image of output
+    README.md                       - instructions, annotated assembler source
+    source.bas                      - BBC Micro BASIC / assembler source
+                                        (detokenised, readable on host)
+    present                         - the binary executable
+                                        LOAD = &0040 EXEC = &0040
+
+Author: Julie Kirsty Louise Montoya <bluerizlagirl@gmail.com>
+Category: Christmas Challenge
+System:   BBC Micro
+Language: BBC BASIC / 6502 Assembler (built-in BASIC assembler)
+Len source code: 882 bytes   (tokenised on target system)
+                 1043 bytes  (detokenised on host system)
+Len exe file:    78 bytes
+Len code only:   78 bytes
+
+Instructions:
+
+Install BeebEm or another suitable BBC emulator, if you have not already ;)
+Start emulator. NB: Make sure Econet is disabled!
+Load the disc image "juliem_bbc_6502_vc3-2024.ssd" in drive 0
+Make sure the disc is NOT write-protected
+Enter the following command to assemble the machine code:
+CHAIN"SOURCE"
+Press SHIFT to scroll the screen when it becomes full.
+There will now be a new file on the disc called PRESENT
+Type the following to run the assembled code:
+*PRESENT
+
+
+Description:
+
+SOURCE is a BASIC program which uses the BBC Micro's built-in assembler
+to assemble a 6502 machine code program, which draws a present identical
+to the pattern given in the programming challenge, as near to the centre
+of the screen as possible.
+
+        \O/
++--------+--------+
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
++--------+--------+
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
+!        !        !
++--------+--------+
+
+The program first prints a series of control codes to select a suitable
+screen MODE and position the cursor for the bow; prints the characters
+\, O and /; and finally prints control codes to return the cursor to the
+beginning of the line and move down.
+
+To draw the main body of the present, we rely on the diagonal symmetry
+of the shape.  A single table can then be used to look up whether or not
+we need to draw anything.  The table holds the following values:
+
+1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1
+
+At each position we double the row value  (giving 2 where a horizontal
+line is required),  add the column value  (giving 1 where a vertical
+line is required, or 3 where two lines meet), and use this to select a
+character to print to the screen.
+
+Since the table repeats after nine values, we only need to store those
+first nine values; and then we can use the "cartoon railroad" technique
+to extend the table as we read it, like laying down fresh track in front
+of a moving train.
+
+
+To take advantage of the 6502's special "short" mode, the whole program
+sits in zero page.  The locations to which it loads are mostly safe
+(&70-8F are guaranteed not to be used by BBC BASIC, &50-&6F don't seem
+to be used by BBC BASIC and &40-&4F will be overwritten by BBC BASIC
+but only when the program has finished).  The program will overwite
+another 19 bytes of memory and this is supposed to be for the use of
+filing systems, but it did not crash my emulator.  If you run this on
+real hardware, do not have any irreplaceable discs in the drives!

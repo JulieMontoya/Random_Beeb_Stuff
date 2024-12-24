@@ -1,5 +1,4 @@
-VINTAGE COMPUTING CHRISTMAS CHALLENGE 2024
-==========================================
+# VINTAGE COMPUTING CHRISTMAS CHALLENGE 2024
 
 The challenge is to draw this shape
 
